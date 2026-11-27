@@ -52,3 +52,8 @@ from app.models.privacy import (  # noqa: F401
     SecurityIncident,
     SystemSetting,
 )
+from app.models.guest import (  # noqa: F401
+    BlockedPerson,
+    Event,
+    EventGuest,
+)

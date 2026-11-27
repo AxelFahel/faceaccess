@@ -34,6 +34,7 @@ from app.models.access import (
 from app.models.attendance import AttendanceRecord, RecordType
 from app.models.biometric import BiometricEnrollment, EnrollmentStatus
 from app.models.employee import BiometricStatus, Employee, EmploymentStatus
+from app.models.guest import BlockedPerson, Event, EventGuest
 from app.schemas.dto import KioskVerifyRequest, KioskVerifyResponse
 from app.services.audit import AuditService
 
@@ -65,7 +66,11 @@ def _capture_problem(feature, require_liveness=True):
 
 
 def _identify_in_unit(db, terminal, feature, engine, settings):
-    """Compare once-extracted features only with active enrollments in this terminal's unit."""
+    """Compare once-extracted features with active enrollments (employees and event guests) in this terminal's unit."""
+    keyring = biometric_key_ring()
+    candidates = {}
+
+    # 1. Employees in this unit
     rows = db.execute(
         select(Employee, BiometricEnrollment)
         .join(BiometricEnrollment, BiometricEnrollment.employee_id == Employee.id)
@@ -76,9 +81,6 @@ def _identify_in_unit(db, terminal, feature, engine, settings):
             BiometricEnrollment.status == EnrollmentStatus.ACTIVE,
         )
     ).all()
-    keyring = biometric_key_ring()
-    # Rank people, not enrollments, to avoid treating duplicate templates as two identities.
-    candidates = {}
     for emp, enrollment in rows:
         if (enrollment.engine_version != engine.version or not enrollment.key_id
                 or not enrollment.template_nonce or not enrollment.template_ciphertext):
@@ -92,19 +94,48 @@ def _identify_in_unit(db, terminal, feature, engine, settings):
                 continue
             score = float(engine.compute_similarity(vector, feature.embedding))
         except Exception:
-            continue  # An unreadable template must never authorize a person.
+            continue
         if np.isfinite(score) and (emp.id not in candidates or score > candidates[emp.id][0]):
-            candidates[emp.id] = (score, emp, enrollment)
+            candidates[emp.id] = (score, "employee", emp, enrollment)
+
+    # 2. Event Guests for active events in this unit
+    guest_rows = db.execute(
+        select(EventGuest, Event)
+        .join(Event, Event.id == EventGuest.event_id)
+        .where(
+            Event.unit_id == terminal.unit_id,
+            Event.is_active == True,
+            EventGuest.biometric_status == "enrolled",
+            EventGuest.status.in_(["active", "attended"]),
+        )
+    ).all()
+    for guest, event in guest_rows:
+        if (guest.engine_version != engine.version or not guest.key_id
+                or not guest.template_nonce or not guest.template_ciphertext):
+            continue
+        try:
+            vector = deserialize_template(keyring.decrypt(
+                EncryptedBlob(guest.key_id, guest.template_nonce, guest.template_ciphertext),
+                template_aad(str(guest.id), str(guest.event_id), guest.engine_version),
+            ))
+            if vector.shape != feature.embedding.shape:
+                continue
+            score = float(engine.compute_similarity(vector, feature.embedding))
+        except Exception:
+            continue
+        if np.isfinite(score) and (guest.id not in candidates or score > candidates[guest.id][0]):
+            candidates[guest.id] = (score, "guest", guest, event)
+
     ranked = sorted(candidates.values(), key=lambda item: item[0], reverse=True)
     if not ranked or ranked[0][0] < settings.match_threshold:
-        return None, None, KioskVerifyResponse(
-            status="rejected", message="Rosto não reconhecido nesta unidade. Procure o responsável ou utilize matrícula e PIN.", retryable=True,
+        return None, KioskVerifyResponse(
+            status="rejected", message="Rosto não reconhecido nesta unidade. Procure a portaria.", retryable=True,
         )
     if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < settings.identification_min_margin:
-        return None, None, KioskVerifyResponse(
-            status="inconclusive", message="Não foi possível distinguir a identidade com segurança. Utilize matrícula e PIN.",
+        return None, KioskVerifyResponse(
+            status="inconclusive", message="Não foi possível distinguir a identidade com segurança. Tente novamente.",
         )
-    return ranked[0][1], ranked[0][2], None
+    return ranked[0], None
 
 
 def _decode_image(b64_str: str) -> np.ndarray:
@@ -145,6 +176,12 @@ def kiosk_verify(
     ident = req.identifier.strip()
     feature = None
     selected_enrollment = None
+    similarity: float | None = None
+    quality_score: float | None = None
+    liveness_passed: bool | None = None
+    verification_outcome = "inconclusive"
+    reasons: list[str] = []
+
     if req.method == "face" and not ident:
         if not terminal or not req.image_base64:
             raise ValidationFailed("Captura facial e terminal ativo são obrigatórios.")
@@ -153,24 +190,211 @@ def kiosk_verify(
         problem = _capture_problem(feature)
         if problem:
             return problem
-        emp, selected_enrollment, problem = _identify_in_unit(db, terminal, feature, engine, s)
+        candidate, problem = _identify_in_unit(db, terminal, feature, engine, s)
         if problem:
             return problem
+
+        sim_score, kind, person, extra = candidate
+
+        # Blacklist check
+        clean_ident = person.registration_number if kind == "employee" else person.identifier
+        badge = person.badge_code if kind == "employee" else None
+        blocked_q = select(BlockedPerson).where(
+            BlockedPerson.is_active == True,
+            (BlockedPerson.identifier == clean_ident) |
+            (BlockedPerson.full_name.ilike(person.full_name))
+        )
+        if badge:
+            blocked_q = select(BlockedPerson).where(
+                BlockedPerson.is_active == True,
+                (BlockedPerson.identifier == clean_ident) |
+                (BlockedPerson.identifier == badge) |
+                (BlockedPerson.full_name.ilike(person.full_name))
+            )
+        blocked = db.execute(blocked_q).scalar_one_or_none()
+        if blocked:
+            return KioskVerifyResponse(
+                status="rejected",
+                access_decision="denied",
+                message=f"ACESSO BLOQUEADO: {blocked.reason}",
+                employee_name=person.full_name,
+                similarity=sim_score,
+                quality_score=feature.quality.score if feature else None,
+                liveness_passed=feature.liveness.is_real if (feature and feature.liveness) else None,
+                reasons=[f"Bloqueio administrativo: {blocked.reason}"],
+                retryable=False,
+            )
+
+        # If Guest: validate event window
+        if kind == "guest":
+            event = extra
+            starts_at = event.starts_at if event.starts_at.tzinfo else event.starts_at.replace(tzinfo=UTC)
+            ends_at = event.ends_at if event.ends_at.tzinfo else event.ends_at.replace(tzinfo=UTC)
+            early_window = starts_at - timedelta(minutes=event.early_entry_minutes)
+            late_window = ends_at + timedelta(minutes=event.late_entry_minutes)
+
+            if now < early_window:
+                start_str = starts_at.strftime("%H:%M")
+                early_str = early_window.strftime("%H:%M")
+                return KioskVerifyResponse(
+                    status="rejected",
+                    access_decision="denied",
+                    message=f"Acesso não liberado. O evento '{event.name}' inicia às {start_str} (entrada permitida a partir das {early_str}).",
+                    employee_name=f"{person.full_name} (Convidado)",
+                    similarity=sim_score,
+                    reasons=["Horário de entrada do evento ainda não iniciado"],
+                    retryable=False,
+                )
+            elif now > late_window:
+                end_str = ends_at.strftime("%H:%M")
+                return KioskVerifyResponse(
+                    status="rejected",
+                    access_decision="denied",
+                    message=f"Acesso não liberado. O evento '{event.name}' encerrou às {end_str}.",
+                    employee_name=f"{person.full_name} (Convidado)",
+                    similarity=sim_score,
+                    reasons=["Horário do evento já expirado"],
+                    retryable=False,
+                )
+            else:
+                if not person.first_access_at:
+                    person.first_access_at = now
+                person.last_access_at = now
+                person.access_count += 1
+                person.status = "attended"
+
+                v_event = VerificationEvent(
+                    employee_id=None,
+                    terminal_id=terminal.id if terminal else None,
+                    identifier_type="face",
+                    method="face",
+                    outcome="verified",
+                    similarity=sim_score,
+                    quality_score=feature.quality.score if feature else None,
+                    liveness_score=feature.liveness.confidence if (feature and feature.liveness) else None,
+                    liveness_passed=feature.liveness.is_real if (feature and feature.liveness) else None,
+                    reasons=[f"Convidado do evento '{event.name}'"],
+                    engine_version=engine.version,
+                )
+                db.add(v_event)
+                db.flush()
+
+                a_event = AccessEvent(
+                    employee_id=None,
+                    terminal_id=terminal.id if terminal else None,
+                    unit_id=terminal.unit_id if terminal else None,
+                    verification_event_id=v_event.id,
+                    decision="granted",
+                    reasons=[f"Convidado autorizado para o evento '{event.name}'"],
+                    device_command="UNLOCK_RELAY",
+                )
+                db.add(a_event)
+                db.commit()
+
+                return KioskVerifyResponse(
+                    status="verified",
+                    access_decision="granted",
+                    message=f"CONVIDADO AUTORIZADO — Evento: {event.name}",
+                    employee_name=f"{person.full_name} (Convidado)",
+                    similarity=sim_score,
+                    quality_score=feature.quality.score if feature else None,
+                    liveness_passed=feature.liveness.is_real if (feature and feature.liveness) else None,
+                    reasons=[f"Acesso liberado para o evento '{event.name}'"],
+                )
+
+        emp = person
+        selected_enrollment = extra
+        similarity = sim_score
+        quality_score = feature.quality.score if feature else None
+        liveness_passed = feature.liveness.is_real if (feature and feature.liveness) else None
+        verification_outcome = "verified"
+
     else:
         if not ident:
-            raise ValidationFailed("Informe a matrícula ou crachá para utilizar PIN.")
+            raise ValidationFailed("Informe a identificação para verificação.")
+
+        # Check Blacklist by identifier
+        blocked = db.execute(
+            select(BlockedPerson).where(
+                BlockedPerson.is_active == True,
+                BlockedPerson.identifier == ident.upper(),
+            )
+        ).scalar_one_or_none()
+        if blocked:
+            return KioskVerifyResponse(
+                status="rejected",
+                access_decision="denied",
+                message=f"ACESSO BLOQUEADO: {blocked.reason}",
+                reasons=[f"Bloqueio administrativo: {blocked.reason}"],
+                retryable=False,
+            )
+
         emp = db.execute(
             select(Employee).where(
                 (Employee.registration_number == ident) | (Employee.badge_code == ident)
             )
         ).scalar_one_or_none()
 
-    if not emp:
-        return KioskVerifyResponse(
-            status="rejected",
-            message="Identificação funcional não encontrada.",
-            reasons=["Funcionário não cadastrado"],
-        )
+        if not emp:
+            guest = db.execute(
+                select(EventGuest).where(
+                    EventGuest.identifier == ident.upper(),
+                    EventGuest.status.in_(["active", "attended"]),
+                )
+            ).scalar_one_or_none()
+            if guest:
+                event = db.get(Event, guest.event_id)
+                if not event or not event.is_active or (terminal and event.unit_id != terminal.unit_id):
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        access_decision="denied",
+                        message="Evento inativo ou não autorizado nesta unidade.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                    )
+                if req.method == "pin" and req.pin and guest.pin_hash:
+                    if not verify_secret(guest.pin_hash, req.pin):
+                        return KioskVerifyResponse(
+                            status="rejected",
+                            message="PIN incorreto.",
+                            employee_name=f"{guest.full_name} (Convidado)",
+                        )
+                starts_at = event.starts_at if event.starts_at.tzinfo else event.starts_at.replace(tzinfo=UTC)
+                ends_at = event.ends_at if event.ends_at.tzinfo else event.ends_at.replace(tzinfo=UTC)
+                early_window = starts_at - timedelta(minutes=event.early_entry_minutes)
+                late_window = ends_at + timedelta(minutes=event.late_entry_minutes)
+                if now < early_window:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        access_decision="denied",
+                        message=f"Acesso não liberado. O evento '{event.name}' inicia às {starts_at.strftime('%H:%M')}.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                    )
+                elif now > late_window:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        access_decision="denied",
+                        message=f"Acesso não liberado. O evento '{event.name}' encerrou às {ends_at.strftime('%H:%M')}.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                    )
+                else:
+                    if not guest.first_access_at:
+                        guest.first_access_at = now
+                    guest.last_access_at = now
+                    guest.access_count += 1
+                    guest.status = "attended"
+                    db.commit()
+                    return KioskVerifyResponse(
+                        status="verified",
+                        access_decision="granted",
+                        message=f"CONVIDADO AUTORIZADO — Evento: {event.name}",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                    )
+
+            return KioskVerifyResponse(
+                status="rejected",
+                message="Identificação não encontrada.",
+                reasons=["Funcionário ou convidado não cadastrado"],
+            )
 
     if emp.employment_status != EmploymentStatus.ACTIVE:
         return KioskVerifyResponse(
@@ -182,11 +406,6 @@ def kiosk_verify(
 
     # 3. Check verification method
     method = req.method.lower()
-    similarity: float | None = None
-    quality_score: float | None = None
-    liveness_passed: bool | None = None
-    verification_outcome = "inconclusive"
-    reasons: list[str] = []
 
     if method == "pin":
         # Non-biometric alternative
@@ -222,101 +441,105 @@ def kiosk_verify(
         verification_outcome = "verified"
 
     elif method == "face":
-        if emp.biometric_status != BiometricStatus.ENROLLED:
-            return KioskVerifyResponse(
-                status="no_biometrics",
-                message="Biometria não cadastrada. Utilize o PIN ou procure o RH.",
-                employee_name=emp.full_name,
-                reasons=["Biometria facial não cadastrada"],
-            )
+        if not ident:
+            # Already matched, similarity and liveness checked in Step 2 automatic identification
+            pass
+        else:
+            if emp.biometric_status != BiometricStatus.ENROLLED:
+                return KioskVerifyResponse(
+                    status="no_biometrics",
+                    message="Biometria não cadastrada. Utilize o PIN ou procure o RH.",
+                    employee_name=emp.full_name,
+                    reasons=["Biometria facial não cadastrada"],
+                )
 
-        if not req.image_base64:
-            raise ValidationFailed("Captura facial ausente para verificação biométrica.")
+            if not req.image_base64:
+                raise ValidationFailed("Captura facial ausente para verificação biométrica.")
 
-        enrollment = selected_enrollment or db.execute(
-            select(BiometricEnrollment).where(
-                BiometricEnrollment.employee_id == emp.id,
-                BiometricEnrollment.status == EnrollmentStatus.ACTIVE,
-            )
-        ).scalar_one_or_none()
+            enrollment = selected_enrollment or db.execute(
+                select(BiometricEnrollment).where(
+                    BiometricEnrollment.employee_id == emp.id,
+                    BiometricEnrollment.status == EnrollmentStatus.ACTIVE,
+                )
+            ).scalar_one_or_none()
 
-        if not enrollment or not enrollment.template_ciphertext or not enrollment.template_nonce or not enrollment.key_id:
-            return KioskVerifyResponse(
-                status="no_biometrics",
-                message="Representação biométrica indisponível ou revogada.",
-                employee_name=emp.full_name,
-                reasons=["Cadastro biométrico indisponível"],
-            )
+            if not enrollment or not enrollment.template_ciphertext or not enrollment.template_nonce or not enrollment.key_id:
+                return KioskVerifyResponse(
+                    status="no_biometrics",
+                    message="Representação biométrica indisponível ou revogada.",
+                    employee_name=emp.full_name,
+                    reasons=["Cadastro biométrico indisponível"],
+                )
 
-        # Process input capture
-        engine = get_biometric_engine()
-        if feature is None:
-            img_bgr = _decode_image(req.image_base64)
-            feature = engine.process_face(img_bgr, check_liveness=s.liveness_enabled)
+            # Process input capture
+            engine = get_biometric_engine()
+            if feature is None:
+                img_bgr = _decode_image(req.image_base64)
+                feature = engine.process_face(img_bgr, check_liveness=s.liveness_enabled)
 
-        if not feature:
-            return KioskVerifyResponse(
-                status="rejected",
-                message="Nenhum rosto detectado na câmera. Posicione-se em frente ao visor.",
-                employee_name=emp.full_name,
-                reasons=["Rosto não detectado"],
-                retryable=True,
-            )
-
-        quality_score = feature.quality.score
-        if not feature.quality.passed:
-            err_details = "; ".join(feature.quality.errors)
-            return KioskVerifyResponse(
-                status="inconclusive",
-                message=f"Qualidade de captura insuficiente. {err_details}",
-                employee_name=emp.full_name,
-                quality_score=quality_score,
-                reasons=feature.quality.errors,
-                retryable=True,
-            )
-
-        if s.liveness_enabled and not feature.liveness:
-            return KioskVerifyResponse(status="rejected", message="Não foi possível confirmar a vivacidade.", retryable=True)
-        if feature.liveness:
-            liveness_passed = feature.liveness.is_real
-            if not liveness_passed:
+            if not feature:
                 return KioskVerifyResponse(
                     status="rejected",
-                    message="Verificação de vivacidade não concluída. Olhe diretamente para a câmera.",
+                    message="Nenhum rosto detectado na câmera. Posicione-se em frente ao visor.",
                     employee_name=emp.full_name,
-                    liveness_passed=False,
-                    reasons=["Falha na prova de vivacidade"],
+                    reasons=["Rosto não detectado"],
                     retryable=True,
                 )
 
-        # Decrypt registered template
-        keyring = biometric_key_ring()
-        aad = template_aad(str(enrollment.id), str(emp.id), enrollment.engine_version)
-        try:
-            pt = keyring.decrypt(
-                EncryptedBlob(enrollment.key_id, enrollment.template_nonce, enrollment.template_ciphertext),
-                aad,
-            )
-            master_vec = deserialize_template(pt)
-        except Exception:
-            return KioskVerifyResponse(
-                status="rejected",
-                message="Falha de integridade no cadastro biométrico.",
-                employee_name=emp.full_name,
-                reasons=["Erro de autenticação da representação biométrica"],
-            )
+            quality_score = feature.quality.score
+            if not feature.quality.passed:
+                err_details = "; ".join(feature.quality.errors)
+                return KioskVerifyResponse(
+                    status="inconclusive",
+                    message=f"Qualidade de captura insuficiente. {err_details}",
+                    employee_name=emp.full_name,
+                    quality_score=quality_score,
+                    reasons=feature.quality.errors,
+                    retryable=True,
+                )
 
-        # Compute cosine similarity
-        similarity = engine.compute_similarity(master_vec, feature.embedding)
+            if s.liveness_enabled and not feature.liveness:
+                return KioskVerifyResponse(status="rejected", message="Não foi possível confirmar a vivacidade.", retryable=True)
+            if feature.liveness:
+                liveness_passed = feature.liveness.is_real
+                if not liveness_passed:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        message="Verificação de vivacidade não concluída. Olhe diretamente para a câmera.",
+                        employee_name=emp.full_name,
+                        liveness_passed=False,
+                        reasons=["Falha na prova de vivacidade"],
+                        retryable=True,
+                    )
 
-        if similarity >= s.match_threshold:
-            verification_outcome = "verified"
-        elif similarity < s.inconclusive_threshold:
-            verification_outcome = "rejected"
-            reasons.append(f"Similaridade facial insuficiente ({similarity:.2f} < {s.match_threshold:.2f})")
-        else:
-            verification_outcome = "inconclusive"
-            reasons.append(f"Resultado inconclusivo ({similarity:.2f}). Repita a captura.")
+            # Decrypt registered template
+            keyring = biometric_key_ring()
+            aad = template_aad(str(enrollment.id), str(emp.id), enrollment.engine_version)
+            try:
+                pt = keyring.decrypt(
+                    EncryptedBlob(enrollment.key_id, enrollment.template_nonce, enrollment.template_ciphertext),
+                    aad,
+                )
+                master_vec = deserialize_template(pt)
+            except Exception:
+                return KioskVerifyResponse(
+                    status="rejected",
+                    message="Falha de integridade no cadastro biométrico.",
+                    employee_name=emp.full_name,
+                    reasons=["Erro de autenticação da representação biométrica"],
+                )
+
+            # Compute cosine similarity
+            similarity = engine.compute_similarity(master_vec, feature.embedding)
+
+            if similarity >= s.match_threshold:
+                verification_outcome = "verified"
+            elif similarity < s.inconclusive_threshold:
+                verification_outcome = "rejected"
+                reasons.append(f"Similaridade facial insuficiente ({similarity:.2f} < {s.match_threshold:.2f})")
+            else:
+                verification_outcome = "inconclusive"
+                reasons.append(f"Resultado inconclusivo ({similarity:.2f}). Repita a captura.")
 
     # 4. Record VerificationEvent
     v_event = VerificationEvent(

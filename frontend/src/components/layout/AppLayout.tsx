@@ -13,12 +13,16 @@ import {
   ScanFace,
   Moon,
   Sun,
+  CalendarDays,
+  UserX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Funcionários", href: "/employees", icon: Users },
+  { label: "Eventos & Convidados", href: "/events", icon: CalendarDays },
+  { label: "Lista de Bloqueados", href: "/blocked", icon: UserX },
   { label: "Presença & Ponto", href: "/attendance", icon: Clock },
   { label: "Terminais", href: "/terminals", icon: MonitorDot },
   { label: "Relatórios", href: "/reports", icon: FileText },

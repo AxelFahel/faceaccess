@@ -8,7 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.biometrics import router as biometrics_router
+from app.api.v1.blocked import router as blocked_router
 from app.api.v1.employees import router as employees_router
+from app.api.v1.events import router as events_router
 from app.api.v1.kiosk import router as kiosk_router
 from app.api.v1.management import (
     attendance_router,
@@ -77,6 +79,8 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router, prefix=v1_prefix)
     app.include_router(reports_router, prefix=v1_prefix)
     app.include_router(privacy_router, prefix=v1_prefix)
+    app.include_router(events_router, prefix=v1_prefix)
+    app.include_router(blocked_router, prefix=v1_prefix)
 
     @app.get("/api/v1/health", tags=["Health"])
     def health():

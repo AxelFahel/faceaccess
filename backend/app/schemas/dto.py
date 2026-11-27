@@ -307,3 +307,89 @@ class DashboardMetrics(BaseModel):
     active_terminals: int
     system_status: str
     timestamp: datetime
+
+
+# --- Events & Guests ---
+class EventCreate(BaseModel):
+    unit_id: uuid.UUID
+    name: str
+    description: str | None = None
+    location_name: str | None = None
+    starts_at: datetime
+    ends_at: datetime
+    early_entry_minutes: int = 30
+    late_entry_minutes: int = 60
+
+
+class EventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    unit_id: uuid.UUID
+    name: str
+    description: str | None = None
+    location_name: str | None = None
+    starts_at: datetime
+    ends_at: datetime
+    early_entry_minutes: int
+    late_entry_minutes: int
+    is_active: bool
+    guest_count: int = 0
+    created_at: datetime
+
+
+class EventGuestCreate(BaseModel):
+    event_id: uuid.UUID | None = None
+    full_name: str
+    identifier: str
+    email: EmailStr | None = None
+    phone: str | None = None
+    organization_represented: str | None = None
+    pin: str | None = Field(None, min_length=4, max_length=12)
+
+
+class EventGuestRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    event_id: uuid.UUID
+    full_name: str
+    identifier: str
+    email: str | None = None
+    phone: str | None = None
+    organization_represented: str | None = None
+    biometric_status: str
+    status: str
+    first_access_at: datetime | None = None
+    last_access_at: datetime | None = None
+    access_count: int
+    created_at: datetime
+
+
+class GuestBiometricEnroll(BaseModel):
+    guest_id: uuid.UUID
+    images_base64: list[str] = Field(..., min_length=1, max_length=5)
+
+
+# --- Blocked Persons (Blacklist) ---
+class BlockedPersonCreate(BaseModel):
+    full_name: str
+    identifier: str
+    reason: str
+
+
+class BlockedPersonRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    organization_id: uuid.UUID | None = None
+    full_name: str
+    identifier: str
+    reason: str
+    blocked_by_name: str | None = None
+    is_active: bool
+    blocked_at: datetime
+    unblocked_at: datetime | None = None
+    unblocked_reason: str | None = None
+    created_at: datetime
+
+
+class BlockedPersonUnblock(BaseModel):
+    unblock_reason: str = "Desbloqueio autorizado administrativamente"

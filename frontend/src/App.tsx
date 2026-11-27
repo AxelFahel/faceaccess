@@ -8,6 +8,8 @@ import { TerminalsPage } from "@/pages/TerminalsPage";
 import { PrivacyPage } from "@/pages/PrivacyPage";
 import { KioskPage } from "@/pages/KioskPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { EventsPage } from "@/pages/EventsPage";
+import { BlockedPage } from "@/pages/BlockedPage";
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem("access_token");
@@ -36,6 +38,22 @@ export function App() {
           element={
             <PrivateRoute>
               <EmployeesPage />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/events"
+          element={
+            <PrivateRoute>
+              <EventsPage />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/blocked"
+          element={
+            <PrivateRoute>
+              <BlockedPage />
             </PrivateRoute>
           }
         />
