@@ -397,7 +397,7 @@ export function KioskPage() {
                   <span className="font-mono text-sm sm:text-base font-bold text-white">{resultTime}</span>
                 </div>
                 <p className="mt-4 text-xs text-emerald-300/80">
-                  Identidade verificada e presença confirmada!
+                  {result.message || "Identidade verificada e presença confirmada!"}
                 </p>
               </div>
             ) : (

@@ -16,6 +16,8 @@ export interface Employee {
   phone?: string;
   unit_id: string;
   department_id?: string;
+  work_schedule_id?: string;
+  work_schedule_name?: string;
   employment_status: "active" | "inactive" | "on_leave" | "terminated";
   biometric_status: "not_enrolled" | "enrolled" | "revoked" | "opted_out";
   access_profile: string;

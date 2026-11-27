@@ -152,6 +152,8 @@ class EmployeeRead(BaseModel):
     email: str
     phone: str | None = None
     admission_date: date | None = None
+    work_schedule_id: uuid.UUID | None = None
+    work_schedule_name: str | None = None
     employment_status: str
     biometric_status: str
     access_profile: str
@@ -169,6 +171,7 @@ class EmployeeCreate(BaseModel):
     unit_id: uuid.UUID
     department_id: uuid.UUID | None = None
     admission_date: date | None = None
+    work_schedule_id: uuid.UUID | None = None
     access_profile: str = "standard"
     notes: str | None = None
     pin: str | None = Field(None, min_length=4, max_length=12)
@@ -181,6 +184,7 @@ class EmployeeUpdate(BaseModel):
     phone: str | None = None
     unit_id: uuid.UUID | None = None
     department_id: uuid.UUID | None = None
+    work_schedule_id: uuid.UUID | None = None
     employment_status: str | None = None
     access_profile: str | None = None
     notes: str | None = None
@@ -393,3 +397,59 @@ class BlockedPersonRead(BaseModel):
 
 class BlockedPersonUnblock(BaseModel):
     unblock_reason: str = "Desbloqueio autorizado administrativamente"
+
+
+# --- Work Schedules & Schedule Exceptions ---
+class WorkScheduleDay(BaseModel):
+    weekday: int = Field(..., ge=0, le=6, description="0=Segunda, 6=Domingo")
+    start: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="HH:MM")
+    end: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="HH:MM")
+    break_minutes: int = 60
+
+
+class WorkScheduleCreate(BaseModel):
+    name: str
+    description: str | None = None
+    days: list[WorkScheduleDay] = []
+    tolerance_minutes: int = 15
+
+
+class WorkScheduleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    name: str
+    description: str | None = None
+    days: list
+    tolerance_minutes: int
+    is_active: bool
+    created_at: datetime
+
+
+class ScheduleExceptionCreate(BaseModel):
+    employee_id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    reason: str
+    exception_type: str = "overtime"  # overtime | on_call | emergency | maintenance | other
+
+
+class ScheduleExceptionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str | None = None
+    starts_at: datetime
+    ends_at: datetime
+    reason: str
+    exception_type: str
+    authorized_by_name: str | None = None
+    is_active: bool
+    used_at: datetime | None = None
+    access_count: int
+    created_at: datetime
+
+
+class ScheduleExceptionCancel(BaseModel):
+    cancel_reason: str = "Cancelamento administrativo"
+

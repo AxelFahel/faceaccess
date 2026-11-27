@@ -32,6 +32,8 @@ export function EmployeesPage() {
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState("");
   const [unitId, setUnitId] = useState("");
+  const [schedules, setSchedules] = useState<{ id: string; name: string }[]>([]);
+  const [workScheduleId, setWorkScheduleId] = useState("");
 
   const loadEmployees = () => {
     setLoading(true);
@@ -49,6 +51,10 @@ export function EmployeesPage() {
         if (units.length > 0) setUnitId(units[0].id);
       })
       .catch(console.error);
+    // Load available schedules
+    apiFetch<{ id: string; name: string }[]>("/api/v1/schedules")
+      .then(setSchedules)
+      .catch(console.error);
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -61,6 +67,7 @@ export function EmployeesPage() {
           registration_number: regNumber,
           email,
           unit_id: unitId,
+          work_schedule_id: workScheduleId || undefined,
           pin: pin || undefined,
         }),
       });
@@ -116,6 +123,7 @@ export function EmployeesPage() {
               <tr>
                 <th className="px-4 sm:px-6 py-3">Funcionário</th>
                 <th className="px-4 sm:px-6 py-3">Matrícula</th>
+                <th className="px-4 sm:px-6 py-3">Jornada / Horário</th>
                 <th className="px-4 sm:px-6 py-3">Status Funcional</th>
                 <th className="px-4 sm:px-6 py-3">Biometria Facial</th>
                 <th className="px-4 sm:px-6 py-3 text-right">Ações</th>
@@ -124,13 +132,13 @@ export function EmployeesPage() {
             <tbody className="divide-y text-foreground">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 sm:px-6 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 sm:px-6 py-8 text-center text-muted-foreground">
                     Carregando colaboradores...
                   </td>
                 </tr>
               ) : employees.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 sm:px-6 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 sm:px-6 py-8 text-center text-muted-foreground">
                     Nenhum funcionário encontrado.
                   </td>
                 </tr>
@@ -143,6 +151,15 @@ export function EmployeesPage() {
                     </td>
                     <td className="px-4 sm:px-6 py-4 font-mono text-xs text-muted-foreground">
                       {emp.registration_number}
+                    </td>
+                    <td className="px-4 sm:px-6 py-4 text-xs">
+                      {emp.work_schedule_name ? (
+                        <span className="font-semibold text-foreground bg-primary/10 text-primary px-2 py-0.5 rounded">
+                          {emp.work_schedule_name}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground italic text-[11px]">Sem restrição</span>
+                      )}
                     </td>
                     <td className="px-4 sm:px-6 py-4">
                       <span className="inline-flex rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -237,6 +254,21 @@ export function EmployeesPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   className="mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm"
                 />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Jornada de Trabalho (Horário de Acesso)</label>
+                <select
+                  value={workScheduleId}
+                  onChange={(e) => setWorkScheduleId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground"
+                >
+                  <option value="">Sem restrição de horário</option>
+                  {schedules.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground">PIN de Acesso (Alternativa não biométrica)</label>

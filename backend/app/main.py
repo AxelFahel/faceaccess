@@ -12,6 +12,7 @@ from app.api.v1.blocked import router as blocked_router
 from app.api.v1.employees import router as employees_router
 from app.api.v1.events import router as events_router
 from app.api.v1.kiosk import router as kiosk_router
+from app.api.v1.schedules import router as schedules_router
 from app.api.v1.management import (
     attendance_router,
     dashboard_router,
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(privacy_router, prefix=v1_prefix)
     app.include_router(events_router, prefix=v1_prefix)
     app.include_router(blocked_router, prefix=v1_prefix)
+    app.include_router(schedules_router, prefix=v1_prefix)
 
     @app.get("/api/v1/health", tags=["Health"])
     def health():

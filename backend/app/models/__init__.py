@@ -38,6 +38,7 @@ from app.models.organization import (  # noqa: F401
     Organization,
     Position,
     ScheduleAssignment,
+    ScheduleException,
     Sector,
     Unit,
     WorkSchedule,

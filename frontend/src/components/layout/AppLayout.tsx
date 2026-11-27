@@ -15,12 +15,14 @@ import {
   Sun,
   CalendarDays,
   UserX,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Funcionários", href: "/employees", icon: Users },
+  { label: "Jornadas & Exceções", href: "/schedules", icon: CalendarClock },
   { label: "Eventos & Convidados", href: "/events", icon: CalendarDays },
   { label: "Lista de Bloqueados", href: "/blocked", icon: UserX },
   { label: "Presença & Ponto", href: "/attendance", icon: Clock },

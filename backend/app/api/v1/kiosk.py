@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import cv2
 import numpy as np
@@ -22,7 +22,7 @@ from app.core.crypto import (
 )
 from app.core.errors import Forbidden, ValidationFailed
 from app.core.security import verify_secret
-from app.core.timeutil import local_today, utcnow
+from app.core.timeutil import local_today, to_local, utcnow
 from app.db.session import get_db
 from app.models.access import (
     AccessEvent,
@@ -35,6 +35,7 @@ from app.models.attendance import AttendanceRecord, RecordType
 from app.models.biometric import BiometricEnrollment, EnrollmentStatus
 from app.models.employee import BiometricStatus, Employee, EmploymentStatus
 from app.models.guest import BlockedPerson, Event, EventGuest
+from app.models.organization import ScheduleException, WorkSchedule
 from app.schemas.dto import KioskVerifyRequest, KioskVerifyResponse
 from app.services.audit import AuditService
 
@@ -211,7 +212,7 @@ def kiosk_verify(
                 (BlockedPerson.identifier == badge) |
                 (BlockedPerson.full_name.ilike(person.full_name))
             )
-        blocked = db.execute(blocked_q).scalar_one_or_none()
+        blocked = db.execute(blocked_q.order_by(BlockedPerson.blocked_at.desc())).scalars().first()
         if blocked:
             return KioskVerifyResponse(
                 status="rejected",
@@ -318,8 +319,8 @@ def kiosk_verify(
             select(BlockedPerson).where(
                 BlockedPerson.is_active == True,
                 BlockedPerson.identifier == ident.upper(),
-            )
-        ).scalar_one_or_none()
+            ).order_by(BlockedPerson.blocked_at.desc())
+        ).scalars().first()
         if blocked:
             return KioskVerifyResponse(
                 status="rejected",
@@ -340,8 +341,8 @@ def kiosk_verify(
                 select(EventGuest).where(
                     EventGuest.identifier == ident.upper(),
                     EventGuest.status.in_(["active", "attended"]),
-                )
-            ).scalar_one_or_none()
+                ).order_by(EventGuest.created_at.desc())
+            ).scalars().first()
             if guest:
                 event = db.get(Event, guest.event_id)
                 if not event or not event.is_active or (terminal and event.unit_id != terminal.unit_id):
@@ -574,11 +575,81 @@ def kiosk_verify(
     # 5. Authorization & Access Decision Check (Independent of biometric verification)
     access_decision = "granted"
     access_reasons = []
+    final_message = "Identidade verificada com sucesso."
 
     # Check terminal / unit match
     if terminal and emp.unit_id != terminal.unit_id:
         access_decision = "denied"
-        access_reasons.append(f"Funcionário alocado em outra unidade")
+        access_reasons.append("Funcionário alocado em outra unidade")
+        final_message = "Acesso negado: funcionário alocado em outra unidade."
+
+    # Check Work Schedule & Working Hours (Período de Trabalho e Exceções Registradas)
+    if access_decision == "granted" and emp.work_schedule_id:
+        work_sched = db.get(WorkSchedule, emp.work_schedule_id)
+        if work_sched and work_sched.is_active:
+            local_now = to_local(now)
+            weekday = local_now.weekday()  # Mon=0 .. Sun=6
+            day_cfg = None
+            for d in (work_sched.days or []):
+                if d.get("weekday") == weekday:
+                    day_cfg = d
+                    break
+
+            within_schedule = False
+            schedule_detail = ""
+            if not day_cfg:
+                schedule_detail = "Hoje é dia de folga (sem expediente previsto)"
+            else:
+                try:
+                    start_str = day_cfg.get("start", "08:00")
+                    end_str = day_cfg.get("end", "17:00")
+                    sh, sm = [int(p) for p in start_str.split(":")]
+                    eh, em = [int(p) for p in end_str.split(":")]
+                    tol = work_sched.tolerance_minutes or 15
+
+                    sched_start_dt = datetime.combine(local_now.date(), time(sh, sm)) - timedelta(minutes=tol)
+                    sched_end_dt = datetime.combine(local_now.date(), time(eh, em)) + timedelta(minutes=tol * 2)
+
+                    current_dt = datetime.combine(local_now.date(), local_now.time())
+                    if sched_start_dt <= current_dt <= sched_end_dt:
+                        within_schedule = True
+                    else:
+                        schedule_detail = f"Fora do horário de trabalho ({start_str} às {end_str})"
+                except Exception:
+                    within_schedule = True
+
+            if not within_schedule:
+                # Check for active ScheduleException
+                exc = db.execute(
+                    select(ScheduleException).where(
+                        ScheduleException.employee_id == emp.id,
+                        ScheduleException.is_active == True,
+                        ScheduleException.starts_at <= now,
+                        ScheduleException.ends_at >= now,
+                    ).order_by(ScheduleException.starts_at.desc())
+                ).scalars().first()
+
+                if exc:
+                    if not exc.used_at:
+                        exc.used_at = now
+                    exc.access_count += 1
+                    access_reasons.append(f"Acesso liberado por exceção: {exc.reason} (Autorizado por: {exc.authorized_by_name or 'Gestão'})")
+                    final_message = f"ACESSO LIBERADO POR EXCEÇÃO REGISTRADA — {exc.reason}"
+                    AuditService.record(
+                        db,
+                        actor_type="terminal",
+                        actor_id=str(terminal.id) if terminal else None,
+                        actor_label=terminal.name if terminal else "Totem",
+                        action="security:access_by_schedule_exception",
+                        resource_type="schedule_exception",
+                        resource_id=str(exc.id),
+                        details={"employee_name": emp.full_name, "reason": exc.reason},
+                    )
+                else:
+                    access_decision = "denied"
+                    rejection_msg = f"Acesso não permitido fora do horário de trabalho. {schedule_detail}. Nenhuma exceção registrada."
+                    access_reasons.append(rejection_msg)
+                    final_message = rejection_msg
 
     # Record AccessEvent
     a_event = AccessEvent(
@@ -631,8 +702,8 @@ def kiosk_verify(
     db.commit()
 
     return KioskVerifyResponse(
-        status="verified",
-        message="Identidade verificada com sucesso." if access_decision == "granted" else "Identidade verificada, mas acesso não autorizado para esta localidade.",
+        status="verified" if access_decision == "granted" else "rejected",
+        message=final_message,
         employee_name=emp.full_name,
         employee_id=emp.id,
         attendance_record_id=att_record_id,

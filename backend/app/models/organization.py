@@ -3,12 +3,13 @@ positions, schedules, shifts, holidays and schedule assignments (escalas)."""
 from __future__ import annotations
 
 import uuid
-from datetime import date, time
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     JSON,
     Boolean,
     Date,
+    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -118,3 +119,23 @@ class ScheduleAssignment(UUIDPk, Timestamps, Base):
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class ScheduleException(UUIDPk, Timestamps, Base):
+    """Exceção autorizada de acesso fora da jornada normal (ex: hora extra, plantão, evento, emergência).
+    Permite acesso do funcionário fora do seu horário habitual durante a janela definida.
+    Deve ser obrigatoriamente justificada e registrada para auditoria.
+    """
+    __tablename__ = "schedule_exceptions"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), index=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    exception_type: Mapped[str] = mapped_column(String(50), default="overtime")  # overtime, on_call, emergency, maintenance, other
+    authorized_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    authorized_by_name: Mapped[str | None] = mapped_column(String(200))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+

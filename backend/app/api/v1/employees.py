@@ -14,6 +14,7 @@ from app.core.errors import Conflict, NotFound
 from app.core.security import hash_secret
 from app.db.session import get_db
 from app.models.employee import BiometricStatus, Employee, EmploymentStatus
+from app.models.organization import WorkSchedule
 from app.schemas.dto import (
     EmployeeCreate,
     EmployeeRead,
@@ -69,8 +70,16 @@ def list_employees(
         .limit(page_size)
     ).scalars().all()
 
+    def _to_read(e: Employee) -> EmployeeRead:
+        read = EmployeeRead.model_validate(e)
+        if e.work_schedule_id:
+            sched = db.get(WorkSchedule, e.work_schedule_id)
+            if sched:
+                read.work_schedule_name = sched.name
+        return read
+
     return PaginatedResponse(
-        items=[EmployeeRead.model_validate(e) for e in items],
+        items=[_to_read(e) for e in items],
         total=total,
         page=page,
         page_size=page_size,
@@ -111,6 +120,7 @@ def create_employee(
         employment_status=EmploymentStatus.ACTIVE,
         biometric_status=BiometricStatus.NOT_ENROLLED,
         access_profile=req.access_profile,
+        work_schedule_id=req.work_schedule_id,
         notes=req.notes,
         pin_hash=pin_hash,
     )
@@ -172,6 +182,8 @@ def update_employee(
         emp.employment_status = req.employment_status
     if req.access_profile is not None:
         emp.access_profile = req.access_profile
+    if req.work_schedule_id is not None:
+        emp.work_schedule_id = req.work_schedule_id
     if req.notes is not None:
         emp.notes = req.notes
     if req.pin is not None:

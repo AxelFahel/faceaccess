@@ -1,8 +1,10 @@
 import json
+import uuid
 import requests
 from datetime import datetime, timezone, timedelta
 
 BASE_URL = 'http://127.0.0.1:8000'
+RUN_ID = uuid.uuid4().hex[:6].upper()
 
 # 1. Login as admin
 login_res = requests.post(
@@ -22,15 +24,16 @@ term_secret = '55468c4d6623cc0a39a5200787d6ae97b83c35dfb23be755c3f638880b5d7f2d'
 headers_term = {'X-Terminal-Code': 'TERM-PORTARIA', 'X-Terminal-Secret': term_secret}
 
 print('=== Test 1: Blocked Person Rejection ===')
+block_ident = f'DOC-BLOCKED-{RUN_ID}'
 block_res = requests.post(f'{BASE_URL}/api/v1/blocked-persons', headers=headers_admin, json={
     'full_name': 'Invasor Teste',
-    'identifier': 'DOC-BLOQUEADO-99',
+    'identifier': block_ident,
     'reason': 'Tentativa previa de invasao e desacato'
 })
 print('Block created:', block_res.json().get('identifier'))
 
 kiosk_blocked = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
-    'identifier': 'DOC-BLOQUEADO-99',
+    'identifier': block_ident,
     'method': 'pin',
     'operation_type': 'attendance'
 })
@@ -58,13 +61,13 @@ ev_fut = ev_fut_res.json()
 
 g_res = requests.post(f"{BASE_URL}/api/v1/events/{ev_fut['id']}/guests", headers=headers_admin, json={
     'full_name': 'Convidado Cedo Demais',
-    'identifier': 'CONV-FUTURO-01',
+    'identifier': f'CONV-FUTURO-{RUN_ID}',
     'pin': '1234'
 })
 print('guest status:', g_res.status_code, g_res.text)
 
 kiosk_fut = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
-    'identifier': 'CONV-FUTURO-01',
+    'identifier': f'CONV-FUTURO-{RUN_ID}',
     'method': 'pin',
     'pin': '1234',
     'operation_type': 'attendance'
@@ -90,12 +93,12 @@ ev_past = requests.post(f'{BASE_URL}/api/v1/events', headers=headers_admin, json
 
 requests.post(f"{BASE_URL}/api/v1/events/{ev_past['id']}/guests", headers=headers_admin, json={
     'full_name': 'Convidado Atrasado',
-    'identifier': 'CONV-PASSADO-01',
+    'identifier': f'CONV-PASSADO-{RUN_ID}',
     'pin': '1234'
 })
 
 kiosk_past = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
-    'identifier': 'CONV-PASSADO-01',
+    'identifier': f'CONV-PASSADO-{RUN_ID}',
     'method': 'pin',
     'pin': '1234',
     'operation_type': 'attendance'
@@ -119,14 +122,15 @@ ev_active = requests.post(f'{BASE_URL}/api/v1/events', headers=headers_admin, js
     'late_entry_minutes': 30
 }).json()
 
+active_ident = f'CONV-ATIVO-{RUN_ID}'
 requests.post(f"{BASE_URL}/api/v1/events/{ev_active['id']}/guests", headers=headers_admin, json={
     'full_name': 'Doutor Convidado Especial',
-    'identifier': 'CONV-ATIVO-01',
+    'identifier': active_ident,
     'pin': '5678'
 })
 
 kiosk_active = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
-    'identifier': 'CONV-ATIVO-01',
+    'identifier': active_ident,
     'method': 'pin',
     'pin': '5678',
     'operation_type': 'attendance'
@@ -140,12 +144,12 @@ print('PASS: Guest inside event window granted access!')
 print('\n=== Test 5: Blacklist Precedence Over Active Event Guest ===')
 requests.post(f'{BASE_URL}/api/v1/blocked-persons', headers=headers_admin, json={
     'full_name': 'Doutor Convidado Especial',
-    'identifier': 'CONV-ATIVO-01',
+    'identifier': active_ident,
     'reason': 'Ordem judicial restritiva'
 })
 
 kiosk_precedence = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
-    'identifier': 'CONV-ATIVO-01',
+    'identifier': active_ident,
     'method': 'pin',
     'pin': '5678',
     'operation_type': 'attendance'
