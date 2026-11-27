@@ -86,6 +86,7 @@ export function EventsPage() {
   const [guestPhone, setGuestPhone] = useState("");
   const [guestOrg, setGuestOrg] = useState("");
   const [guestPin, setGuestPin] = useState("");
+  const [autoOpenEnroll, setAutoOpenEnroll] = useState(true);
   const [submittingGuest, setSubmittingGuest] = useState(false);
 
   // Biometric Enroll Modal state for Guest
@@ -177,7 +178,7 @@ export function EventsPage() {
     }
     setSubmittingGuest(true);
     try {
-      await apiFetch<EventGuest>(`/api/v1/events/${selectedEvent.id}/guests`, {
+      const createdGuest = await apiFetch<EventGuest>(`/api/v1/events/${selectedEvent.id}/guests`, {
         method: "POST",
         body: JSON.stringify({
           full_name: guestName.trim(),
@@ -197,6 +198,12 @@ export function EventsPage() {
       setGuestPin("");
       loadGuests(selectedEvent.id);
       loadEvents();
+
+      if (autoOpenEnroll) {
+        setEnrollGuest(createdGuest);
+        setEnrollImages([]);
+        startCamera();
+      }
     } catch (err: any) {
       alert(err.message || "Falha ao cadastrar convidado.");
     } finally {
@@ -353,13 +360,15 @@ export function EventsPage() {
       </div>
 
       {/* Info notice */}
-      <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground flex items-start gap-3">
-        <Clock className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-        <div>
-          <strong className="text-foreground">Regra do Totem para Convidados:</strong> O convidado cadastrado
-          com biometria facial só terá seu acesso liberado durante o intervalo do evento (incluindo a tolerância de
-          entrada antecipada e saída estendida). Fora desse período, o totem recusa o acesso com aviso visual
-          vermelho e exibição do horário de início/término.
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs text-muted-foreground flex items-start gap-3">
+        <ShieldCheck className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="font-semibold text-foreground">Regra Obrigatória de Biometria Facial para Convidados:</p>
+          <p>
+            Para ter o acesso liberado no totem, o convidado <strong>DEVE possuir cadastro biométrico facial</strong> e
+            comparecer <strong>dentro do período permitido do evento</strong>.
+            Convidados sem biometria cadastrada ou fora da janela do evento são <strong>estritamente rejeitados</strong> pelo totem.
+          </p>
         </div>
       </div>
 
@@ -514,22 +523,28 @@ export function EventsPage() {
                           </td>
                           <td className="px-4 py-3">
                             {g.biometric_status === "enrolled" ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-500">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-500 border border-emerald-500/20">
                                 <CheckCircle2 className="h-3 w-3" />
-                                Cadastrada
+                                Biometria Ativa
                               </span>
                             ) : (
-                              <button
-                                onClick={() => {
-                                  setEnrollGuest(g);
-                                  setEnrollImages([]);
-                                  startCamera();
-                                }}
-                                className="inline-flex items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/20"
-                              >
-                                <Camera className="h-3 w-3" />
-                                Capturar Foto
-                              </button>
+                              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold text-rose-500 border border-rose-500/20">
+                                  <AlertCircle className="h-3 w-3" />
+                                  Sem Biometria (Bloqueado)
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    setEnrollGuest(g);
+                                    setEnrollImages([]);
+                                    startCamera();
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 shadow-sm"
+                                >
+                                  <Camera className="h-3 w-3" />
+                                  Cadastrar Foto
+                                </button>
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-3">
@@ -815,6 +830,24 @@ export function EventsPage() {
                   className="mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground"
                 />
               </div>
+
+              <div className="rounded-lg bg-primary/10 border border-primary/20 p-2.5 text-xs text-primary flex items-start gap-2">
+                <Camera className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Biometria Facial Obrigatória:</strong> Todo convidado deve ter biometria facial
+                  cadastrada para que o totem libere seu acesso durante o evento.
+                </span>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoOpenEnroll}
+                  onChange={(e) => setAutoOpenEnroll(e.target.checked)}
+                  className="rounded text-primary focus:ring-primary h-4 w-4"
+                />
+                Capturar biometria facial imediatamente após salvar
+              </label>
 
               <div className="flex justify-end gap-2 pt-2">
                 <button

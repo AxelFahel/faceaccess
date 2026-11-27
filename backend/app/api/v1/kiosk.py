@@ -344,6 +344,70 @@ def kiosk_verify(
                 ).order_by(EventGuest.created_at.desc())
             ).scalars().first()
             if guest:
+                # 1. BIOMETRICS IS MANDATORY FOR GUESTS
+                if guest.biometric_status != "enrolled" or not guest.template_ciphertext or not guest.key_id:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        access_decision="denied",
+                        message=f"Acesso negado: biometria facial obrigatória não cadastrada para o convidado {guest.full_name}. Realize o cadastro na recepção/portaria.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                        reasons=["Biometria facial obrigatória não cadastrada"],
+                        retryable=False,
+                    )
+
+                # Guests must be verified by facial recognition, not PIN-only
+                if req.method == "pin":
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        access_decision="denied",
+                        message="O acesso de convidados exige validação biométrica facial no totem.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                        reasons=["Reconhecimento facial biométrico obrigatório para convidados"],
+                        retryable=False,
+                    )
+
+                # Face verification against guest's enrolled template
+                if not req.image_base64:
+                    raise ValidationFailed("Captura facial obrigatória para verificação do convidado.")
+
+                engine = get_biometric_engine()
+                if feature is None:
+                    feature = engine.process_face(_decode_image(req.image_base64), check_liveness=s.liveness_enabled)
+                if not feature:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        message="Nenhum rosto detectado na câmera.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                        retryable=True,
+                    )
+
+                keyring = biometric_key_ring()
+                aad = template_aad(str(guest.id), str(guest.event_id), guest.engine_version)
+                try:
+                    pt = keyring.decrypt(
+                        EncryptedBlob(guest.key_id, guest.template_nonce, guest.template_ciphertext),
+                        aad,
+                    )
+                    guest_vec = deserialize_template(pt)
+                except Exception:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        message="Falha de integridade no cadastro biométrico do convidado.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                    )
+
+                similarity = float(engine.compute_similarity(guest_vec, feature.embedding))
+                if similarity < s.match_threshold:
+                    return KioskVerifyResponse(
+                        status="rejected",
+                        access_decision="denied",
+                        message=f"Rosto não confere com o cadastro biométrico de {guest.full_name}.",
+                        employee_name=f"{guest.full_name} (Convidado)",
+                        similarity=similarity,
+                        reasons=[f"Similaridade facial insuficiente ({similarity:.2f} < {s.match_threshold:.2f})"],
+                        retryable=False,
+                    )
+
                 event = db.get(Event, guest.event_id)
                 if not event or not event.is_active or (terminal and event.unit_id != terminal.unit_id):
                     return KioskVerifyResponse(
@@ -352,13 +416,6 @@ def kiosk_verify(
                         message="Evento inativo ou não autorizado nesta unidade.",
                         employee_name=f"{guest.full_name} (Convidado)",
                     )
-                if req.method == "pin" and req.pin and guest.pin_hash:
-                    if not verify_secret(guest.pin_hash, req.pin):
-                        return KioskVerifyResponse(
-                            status="rejected",
-                            message="PIN incorreto.",
-                            employee_name=f"{guest.full_name} (Convidado)",
-                        )
                 starts_at = event.starts_at if event.starts_at.tzinfo else event.starts_at.replace(tzinfo=UTC)
                 ends_at = event.ends_at if event.ends_at.tzinfo else event.ends_at.replace(tzinfo=UTC)
                 early_window = starts_at - timedelta(minutes=event.early_entry_minutes)
@@ -369,6 +426,7 @@ def kiosk_verify(
                         access_decision="denied",
                         message=f"Acesso não liberado. O evento '{event.name}' inicia às {starts_at.strftime('%H:%M')}.",
                         employee_name=f"{guest.full_name} (Convidado)",
+                        similarity=similarity,
                     )
                 elif now > late_window:
                     return KioskVerifyResponse(
@@ -376,6 +434,7 @@ def kiosk_verify(
                         access_decision="denied",
                         message=f"Acesso não liberado. O evento '{event.name}' encerrou às {ends_at.strftime('%H:%M')}.",
                         employee_name=f"{guest.full_name} (Convidado)",
+                        similarity=similarity,
                     )
                 else:
                     if not guest.first_access_at:
@@ -389,6 +448,7 @@ def kiosk_verify(
                         access_decision="granted",
                         message=f"CONVIDADO AUTORIZADO — Evento: {event.name}",
                         employee_name=f"{guest.full_name} (Convidado)",
+                        similarity=similarity,
                     )
 
             return KioskVerifyResponse(

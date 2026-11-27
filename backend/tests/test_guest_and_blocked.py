@@ -1,5 +1,7 @@
+import base64
 import json
 import uuid
+import cv2
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -75,8 +77,9 @@ kiosk_fut = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_ter
 print('Kiosk Future Event Guest Response:', kiosk_fut.json())
 assert kiosk_fut.json()['status'] == 'rejected'
 assert kiosk_fut.json()['access_decision'] == 'denied'
-assert 'não liberado' in kiosk_fut.json()['message'].lower()
-print('PASS: Future guest rejected!')
+# Since guest has no biometrics enrolled, biometric check strictly denies first!
+assert 'biometria' in kiosk_fut.json()['message'].lower()
+print('PASS: Future guest without biometrics strictly rejected!')
 
 print('\n=== Test 3: Event Guest Past Window (Already Ended) ===')
 past_start = now - timedelta(hours=5)
@@ -106,8 +109,8 @@ kiosk_past = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_te
 print('Kiosk Past Event Guest Response:', kiosk_past.json())
 assert kiosk_past.json()['status'] == 'rejected'
 assert kiosk_past.json()['access_decision'] == 'denied'
-assert 'encerrou' in kiosk_past.json()['message'].lower()
-print('PASS: Past guest rejected!')
+assert 'biometria' in kiosk_past.json()['message'].lower()
+print('PASS: Past guest without biometrics strictly rejected!')
 
 print('\n=== Test 4: Event Guest In-Window (Access Granted!) ===')
 active_start = now - timedelta(minutes=15)
@@ -123,16 +126,27 @@ ev_active = requests.post(f'{BASE_URL}/api/v1/events', headers=headers_admin, js
 }).json()
 
 active_ident = f'CONV-ATIVO-{RUN_ID}'
-requests.post(f"{BASE_URL}/api/v1/events/{ev_active['id']}/guests", headers=headers_admin, json={
+g_act = requests.post(f"{BASE_URL}/api/v1/events/{ev_active['id']}/guests", headers=headers_admin, json={
     'full_name': 'Doutor Convidado Especial',
     'identifier': active_ident,
     'pin': '5678'
+}).json()
+
+# Guest MUST enroll biometrics to have access:
+img = cv2.imread('C:/Users/Aksel/.gemini/antigravity-cli/brain/8e310b5b-3884-4612-9287-79f172a784e5/person_a_1_1795750536862.jpg')
+crop = img[100:900, 150:850]
+_, buf = cv2.imencode('.jpg', crop)
+b64_face = base64.b64encode(buf).decode('utf-8')
+
+requests.post(f'{BASE_URL}/api/v1/events/guests/enroll', headers=headers_admin, json={
+    'guest_id': g_act['id'],
+    'images_base64': [b64_face]
 })
 
 kiosk_active = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
     'identifier': active_ident,
-    'method': 'pin',
-    'pin': '5678',
+    'method': 'face',
+    'image_base64': b64_face,
     'operation_type': 'attendance'
 })
 print('Kiosk Active Event Guest Response:', kiosk_active.json())
@@ -150,8 +164,8 @@ requests.post(f'{BASE_URL}/api/v1/blocked-persons', headers=headers_admin, json=
 
 kiosk_precedence = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
     'identifier': active_ident,
-    'method': 'pin',
-    'pin': '5678',
+    'method': 'face',
+    'image_base64': b64_face,
     'operation_type': 'attendance'
 })
 print('Kiosk Blocked Guest Response:', kiosk_precedence.json())
