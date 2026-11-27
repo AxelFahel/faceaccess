@@ -22,6 +22,7 @@ from app.models.biometric import BiometricEnrollment, EnrollmentStatus
 from app.models.employee import BiometricStatus, Employee, EmploymentStatus
 from app.models.organization import Department, Organization, Unit
 from app.schemas.dto import (
+    AttendanceManualCreate,
     AttendanceRecordRead,
     DashboardMetrics,
     DepartmentCreate,
@@ -176,7 +177,11 @@ def list_attendance(
     principal: AuthenticatedPrincipal = Depends(require_permission("attendance:read")),
     db: Session = Depends(get_db),
 ):
-    stmt = select(AttendanceRecord).where(AttendanceRecord.status == "valid")
+    stmt = (
+        select(AttendanceRecord, Employee.full_name)
+        .outerjoin(Employee, AttendanceRecord.employee_id == Employee.id)
+        .where(AttendanceRecord.status == "valid")
+    )
     if employee_id:
         stmt = stmt.where(AttendanceRecord.employee_id == employee_id)
     if target_date:
@@ -185,19 +190,71 @@ def list_attendance(
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     pages = math.ceil(total / page_size) if total > 0 else 1
 
-    records = db.execute(
+    rows = db.execute(
         stmt.order_by(AttendanceRecord.recorded_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
-    ).scalars().all()
+    ).all()
+
+    items = []
+    for r, emp_name in rows:
+        data = AttendanceRecordRead.model_validate(r)
+        data.employee_name = emp_name
+        items.append(data)
 
     return PaginatedResponse(
-        items=[AttendanceRecordRead.model_validate(r) for r in records],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
         pages=pages,
     )
+
+
+@attendance_router.post("/manual", response_model=AttendanceRecordRead)
+def create_manual_attendance(
+    req: AttendanceManualCreate,
+    request: Request,
+    principal: AuthenticatedPrincipal = Depends(require_permission("attendance:manual")),
+    db: Session = Depends(get_db),
+):
+    emp = db.get(Employee, req.employee_id)
+    if not emp:
+        raise NotFound("Funcionário não encontrado.")
+
+    record_time = req.recorded_at or utcnow()
+    local_d = local_today()
+
+    record = AttendanceRecord(
+        employee_id=emp.id,
+        record_type=req.record_type,
+        recorded_at=record_time,
+        local_date=local_d,
+        unit_id=emp.unit_id,
+        verification_method="manual",
+        result="accepted",
+        source="manual",
+        status="valid",
+        created_by_user_id=principal.id,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    AuditService.record(
+        db,
+        actor_type="user",
+        actor_id=str(principal.id),
+        actor_label=principal.label,
+        action="attendance:manual_created",
+        resource_type="attendance",
+        resource_id=str(record.id),
+        details={"employee_id": str(emp.id), "record_type": req.record_type, "reason": req.reason},
+    )
+
+    res = AttendanceRecordRead.model_validate(record)
+    res.employee_name = emp.full_name
+    return res
 
 
 # --- Dashboard ---

@@ -264,10 +264,18 @@ class KioskVerifyResponse(BaseModel):
 
 
 # --- Attendance & Reports ---
+class AttendanceManualCreate(BaseModel):
+    employee_id: uuid.UUID
+    record_type: str = "entry"  # entry | exit | break_start | break_end
+    recorded_at: datetime | None = None
+    reason: str = "Registro manual autorizado"
+
+
 class AttendanceRecordRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     employee_id: uuid.UUID
+    employee_name: str | None = None
     record_type: str
     recorded_at: datetime
     local_date: date

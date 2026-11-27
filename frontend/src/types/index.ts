@@ -39,6 +39,7 @@ export interface DashboardMetrics {
 export interface AttendanceRecord {
   id: string;
   employee_id: string;
+  employee_name?: string;
   record_type: "entry" | "exit" | "break_start" | "break_end";
   recorded_at: string;
   local_date: string;
