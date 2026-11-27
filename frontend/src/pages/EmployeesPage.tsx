@@ -10,8 +10,12 @@ import {
   Check,
   KeyRound,
   Trash2,
+  Upload,
+  AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { resizeImageBase64 } from "@/lib/image";
 import { Employee } from "@/types";
 
 export function EmployeesPage() {
@@ -30,9 +34,11 @@ export function EmployeesPage() {
 
   // Biometrics camera states
   const videoRef = useRef<HTMLVideoElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [captures, setCaptures] = useState<string[]>([]);
   const [enrolling, setEnrolling] = useState(false);
   const [enrollMsg, setEnrollMsg] = useState("");
+  const [cameraError, setCameraError] = useState("");
 
   const loadEmployees = () => {
     setLoading(true);
@@ -78,15 +84,25 @@ export function EmployeesPage() {
 
   // Camera start for enrollment
   const startCamera = async () => {
+    setCameraError("");
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraError(
+          "Câmera de vídeo ao vivo (WebRTC) não está disponível neste navegador (navegadores móveis exigem HTTPS para liberar vídeo contínuo). Use o botão 'Tirar Foto com Câmera' abaixo para usar a câmera nativa do celular diretamente."
+        );
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: "user" },
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erro ao acessar câmera:", err);
+      setCameraError(
+        "Acesso à câmera não liberado ou indisponível. Use o botão 'Tirar Foto com Câmera' abaixo."
+      );
     }
   };
 
@@ -106,26 +122,54 @@ export function EmployeesPage() {
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      const b64 = canvas.toDataURL("image/jpeg", 0.9);
-      setCaptures((prev) => [...prev, b64]);
+      const b64 = canvas.toDataURL("image/jpeg", 0.92);
+      setCaptures((prev) => [...prev, b64].slice(0, 3));
+    }
+  };
+
+  const handleNativeCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    try {
+      setEnrollMsg("Otimizando resolução da imagem...");
+      for (let i = 0; i < files.length; i++) {
+        const b64 = await resizeImageBase64(files[i], 1280);
+        setCaptures((prev) => {
+          if (prev.length >= 3) return prev;
+          return [...prev, b64];
+        });
+      }
+      setEnrollMsg("");
+    } catch (err: any) {
+      setEnrollMsg(`Erro no processamento da imagem: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = "";
     }
   };
 
   const submitEnrollment = async () => {
     if (!enrollModalEmployee) return;
+    if (captures.length === 0) {
+      setEnrollMsg("Tire ou anexe ao menos 1 foto com rosto visível.");
+      return;
+    }
     setEnrolling(true);
-    setEnrollMsg("Processando enquadramento, vivacidade e extração de embedding...");
+    setEnrollMsg("Analisando qualidade, iluminação, vivacidade e gerando biometria...");
     try {
       const legalBases = await apiFetch<{ id: string }[]>("/api/v1/privacy/legal-basis");
+      const legalBasisId = legalBases.length > 0 ? legalBases[0].id : undefined;
+      if (!legalBasisId) {
+        throw new Error("Nenhuma base legal ativa encontrada no sistema.");
+      }
       await apiFetch("/api/v1/biometrics/enroll", {
         method: "POST",
         body: JSON.stringify({
           employee_id: enrollModalEmployee.id,
           images_base64: captures,
-          legal_basis_record_id: legalBases[0].id,
+          legal_basis_record_id: legalBasisId,
         }),
       });
-      setEnrollMsg("Cadastro biométrico concluído com sucesso!");
+      setEnrollMsg("✓ Biometria cadastrada e criptografada com sucesso!");
       setTimeout(() => {
         stopCamera();
         setEnrollModalEmployee(null);
@@ -359,47 +403,99 @@ export function EmployeesPage() {
               </button>
             </div>
 
+            {/* Aviso sobre Câmera HTTP vs Celular */}
+            {cameraError && (
+              <div className="mt-4 rounded-xl bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
+                <div className="space-y-1">
+                  <p className="font-medium">{cameraError}</p>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 flex flex-col items-center">
-              <div className="relative aspect-[4/3] sm:aspect-video w-full max-w-md overflow-hidden rounded-xl border bg-black">
+              {/* Input escondido para acionamento nativo da câmera do smartphone ou seleção de arquivo */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                capture="user"
+                onChange={handleNativeCapture}
+                className="hidden"
+              />
+
+              {/* Viewport da Câmera ao vivo (se disponível) */}
+              <div className="relative aspect-[4/3] sm:aspect-video w-full max-w-md overflow-hidden rounded-xl border bg-black shadow-inner">
                 <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="h-44 w-36 rounded-full border-2 border-dashed border-primary/70" />
+                  <div className="h-44 w-36 rounded-full border-2 border-dashed border-primary/70 animate-pulse" />
                 </div>
               </div>
 
-              {/* Botões de Captura */}
+              {/* Botões de Ação para Captura */}
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                 <button
+                  type="button"
                   onClick={takePhoto}
                   disabled={captures.length >= 3}
-                  className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-lg bg-primary px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  title="Capturar da visualização ao vivo acima"
                 >
                   <Camera className="h-4 w-4" />
-                  Capturar Foto ({captures.length}/3)
+                  Capturar Foto ao Vivo
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={captures.length >= 3}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 shadow-sm"
+                  title="Abre diretamente a câmera selfie nativa do smartphone"
+                >
+                  <Upload className="h-4 w-4" />
+                  Tirar Foto com Câmera do Celular / Upload
+                </button>
+
                 {captures.length > 0 && (
                   <button
+                    type="button"
                     onClick={() => setCaptures([])}
-                    className="rounded-lg border px-3 py-2 text-xs text-muted-foreground hover:bg-muted"
+                    className="flex items-center gap-1 rounded-lg border px-3 py-2 text-xs text-muted-foreground hover:bg-muted"
                   >
-                    Limpar
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Limpar Fotos
                   </button>
                 )}
               </div>
 
-              {/* Miniaturas de Capturas */}
+              {/* Miniaturas das fotos prontas */}
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {captures.map((cap, i) => (
-                  <div key={i} className="relative h-14 w-14 sm:h-16 sm:w-16 overflow-hidden rounded-lg border">
-                    <img src={cap} alt={`Cap ${i}`} className="h-full w-full object-cover" />
+                  <div key={i} className="relative h-16 w-16 sm:h-20 sm:w-20 overflow-hidden rounded-lg border-2 border-emerald-500 shadow-sm">
+                    <img src={cap} alt={`Foto ${i + 1}`} className="h-full w-full object-cover" />
+                    <span className="absolute bottom-0 inset-x-0 bg-black/70 text-[10px] text-center text-white py-0.5">
+                      Foto #{i + 1}
+                    </span>
                   </div>
                 ))}
               </div>
 
-              {enrollMsg && (
-                <p className="mt-3 text-center text-xs font-medium text-primary animate-pulse">
-                  {enrollMsg}
+              {captures.length === 0 && (
+                <p className="mt-2 text-xs text-muted-foreground text-center">
+                  Nenhuma foto capturada ainda. Tire pelo menos 1 foto nítida frontal.
                 </p>
+              )}
+
+              {enrollMsg && (
+                <div className={`mt-3 rounded-lg p-2.5 text-center text-xs font-medium ${
+                  enrollMsg.startsWith("✓")
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : enrollMsg.startsWith("Falha")
+                    ? "bg-destructive/10 text-destructive font-semibold"
+                    : "bg-primary/10 text-primary animate-pulse"
+                }`}>
+                  {enrollMsg}
+                </div>
               )}
 
               <div className="mt-6 flex w-full flex-col sm:flex-row justify-end gap-2 border-t pt-4">
@@ -411,15 +507,17 @@ export function EmployeesPage() {
                   }}
                   className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted"
                 >
-                  Fechar
+                  Cancelar
                 </button>
                 <button
                   type="button"
-                  disabled={captures.length < 2 || enrolling}
+                  disabled={captures.length < 1 || enrolling}
                   onClick={submitEnrollment}
-                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                  className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 shadow-md"
                 >
-                  {enrolling ? "Processando..." : "Confirmar e Criptografar Biometria"}
+                  {enrolling
+                    ? "Processando..."
+                    : `Confirmar e Gravar Biometria (${captures.length} foto${captures.length > 1 ? "s" : ""})`}
                 </button>
               </div>
             </div>

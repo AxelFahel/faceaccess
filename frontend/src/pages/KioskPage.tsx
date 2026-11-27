@@ -8,7 +8,11 @@ import {
   HelpCircle,
   ArrowLeft,
   Volume2,
+  Camera,
+  Upload,
+  AlertTriangle,
 } from "lucide-react";
+import { resizeImageBase64 } from "@/lib/image";
 
 export function KioskPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -18,8 +22,10 @@ export function KioskPage() {
   const [recordType, setRecordType] = useState<"entry" | "exit" | "break_start" | "break_end">("entry");
   const [result, setResult] = useState<any>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [cameraError, setCameraError] = useState("");
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Relógio em tempo real
   useEffect(() => {
@@ -28,16 +34,23 @@ export function KioskPage() {
   }, []);
 
   const startCamera = async () => {
+    setCameraError("");
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraError(
+          "Câmera de streaming (WebRTC) não permitida sem HTTPS neste navegador. Utilize o botão 'Tirar Foto com Câmera do Celular' abaixo."
+        );
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: "user" },
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setStatusMessage("Erro ao acessar câmera local.");
+      setCameraError("Câmera ao vivo bloqueada ou indisponível. Use o botão 'Tirar Foto com Câmera' abaixo.");
     }
   };
 
@@ -55,19 +68,9 @@ export function KioskPage() {
     setTimeout(startCamera, 100);
   };
 
-  const handleCaptureAndVerify = async () => {
-    if (!videoRef.current) return;
-    setStatusMessage("Verificando identidade e vivacidade...");
-    const canvas = document.createElement("canvas");
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const b64 = canvas.toDataURL("image/jpeg", 0.9);
-
+  const verifyWithImage = async (b64: string) => {
     stopCamera();
-
+    setStatusMessage("Verificando identidade e vivacidade com UniFace...");
     try {
       const termCode = localStorage.getItem("terminal_code") || "TERM-01";
       const termSecret = localStorage.getItem("terminal_secret") || "demo-secret";
@@ -91,12 +94,37 @@ export function KioskPage() {
       const data = await res.json();
       setResult(data);
       setMode("result");
-      // Retorno automático após 5 segundos
       setTimeout(resetKiosk, 5000);
     } catch (err: any) {
       setResult({ status: "rejected", message: err.message || "Erro no terminal." });
       setMode("result");
       setTimeout(resetKiosk, 5000);
+    }
+  };
+
+  const handleCaptureAndVerify = async () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current.videoWidth || 640;
+    canvas.height = videoRef.current.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    const b64 = canvas.toDataURL("image/jpeg", 0.92);
+    await verifyWithImage(b64);
+  };
+
+  const handleNativeKioskCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setStatusMessage("Processando foto...");
+      const b64 = await resizeImageBase64(file, 1280);
+      await verifyWithImage(b64);
+    } catch (err: any) {
+      setStatusMessage(`Erro: ${err.message}`);
+    } finally {
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -237,6 +265,22 @@ export function KioskPage() {
 
         {mode === "camera" && (
           <div className="flex w-full max-w-xl flex-col items-center">
+            {cameraError && (
+              <div className="mb-4 w-full rounded-2xl bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-300 flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-400" />
+                <span>{cameraError}</span>
+              </div>
+            )}
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              capture="user"
+              onChange={handleNativeKioskCapture}
+              className="hidden"
+            />
+
             <div className="relative aspect-[4/3] sm:aspect-video w-full overflow-hidden rounded-2xl sm:rounded-3xl border-2 border-blue-500/50 bg-black shadow-2xl">
               <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -257,9 +301,16 @@ export function KioskPage() {
               </button>
               <button
                 onClick={handleCaptureAndVerify}
-                className="w-full sm:w-auto rounded-xl bg-blue-600 px-8 py-3 font-semibold shadow-lg shadow-blue-500/25 hover:bg-blue-500"
+                className="w-full sm:w-auto rounded-xl bg-blue-600 px-6 py-3 font-semibold shadow-lg shadow-blue-500/25 hover:bg-blue-500 text-sm"
               >
-                Confirmar Captura
+                Capturar da Câmera ao Vivo
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full sm:w-auto rounded-xl bg-emerald-600 px-6 py-3 font-semibold shadow-lg shadow-emerald-500/25 hover:bg-emerald-500 text-sm flex items-center justify-center gap-2"
+              >
+                <Camera className="h-4 w-4" />
+                Câmera do Celular
               </button>
             </div>
           </div>
