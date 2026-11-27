@@ -38,19 +38,29 @@ export function KioskPage() {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setCameraError(
-          "Câmera de streaming (WebRTC) não permitida sem HTTPS neste navegador. Utilize o botão 'Tirar Foto com Câmera do Celular' abaixo."
+          "Câmera de streaming (WebRTC) exige conexão HTTPS no navegador. Use o botão 'Câmera do Celular' abaixo."
         );
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        });
+      } catch (e1) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.muted = true;
+        await videoRef.current.play().catch((e) => console.warn("Play interrupted:", e));
       }
     } catch (err: any) {
       console.error(err);
-      setCameraError("Câmera ao vivo bloqueada ou indisponível. Use o botão 'Tirar Foto com Câmera' abaixo.");
+      setCameraError("Câmera ao vivo bloqueada ou indisponível. Use o botão 'Câmera do Celular' abaixo.");
     }
   };
 

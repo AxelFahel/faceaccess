@@ -82,26 +82,53 @@ export function EmployeesPage() {
     }
   };
 
-  // Camera start for enrollment
+  // Camera lifecycle for enrollment
+  useEffect(() => {
+    if (enrollModalEmployee) {
+      // Delay slightly to ensure video element is attached to DOM
+      const timer = setTimeout(() => {
+        startCamera();
+      }, 150);
+      return () => {
+        clearTimeout(timer);
+        stopCamera();
+      };
+    } else {
+      stopCamera();
+    }
+  }, [enrollModalEmployee]);
+
   const startCamera = async () => {
     setCameraError("");
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setCameraError(
-          "Câmera de vídeo ao vivo (WebRTC) não está disponível neste navegador (navegadores móveis exigem HTTPS para liberar vídeo contínuo). Use o botão 'Tirar Foto com Câmera' abaixo para usar a câmera nativa do celular diretamente."
+          "Câmera de vídeo contínuo exige conexão segura (HTTPS) no celular. Use o botão azul 'Tirar Foto com Câmera do Celular' abaixo ou acesse via https://."
         );
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-      });
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        });
+      } catch (e1) {
+        // Fallback for devices/browsers that don't support explicit constraints
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.muted = true;
+        await videoRef.current.play().catch((e) => console.warn("Video play interrupted:", e));
       }
     } catch (err: any) {
       console.error("Erro ao acessar câmera:", err);
       setCameraError(
-        "Acesso à câmera não liberado ou indisponível. Use o botão 'Tirar Foto com Câmera' abaixo."
+        "Acesso à câmera bloqueado ou não autorizado pelo navegador. Use o botão 'Tirar Foto com Câmera do Celular' abaixo."
       );
     }
   };
