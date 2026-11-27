@@ -7,6 +7,7 @@ export function AttendancePage() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [showManualModal, setShowManualModal] = useState(false);
 
   // Manual record form states
@@ -17,12 +18,12 @@ export function AttendancePage() {
   const [reason, setReason] = useState("Registro manual autorizado por esquecimento ou contingência");
   const [submitting, setSubmitting] = useState(false);
 
-  const loadAttendance = () => {
-    setLoading(true);
+  const loadAttendance = (background = false) => {
+    if (!background) setLoading(true);
     const query = dateFilter ? `?target_date=${dateFilter}` : "";
     apiFetch<{ items: AttendanceRecord[] }>(`/api/v1/attendance${query}`)
-      .then((res) => setRecords(res.items))
-      .catch((err) => console.error(err))
+      .then((res) => { setRecords(res.items); setLoadError(""); })
+      .catch((err) => setLoadError(err.message))
       .finally(() => setLoading(false));
   };
 
@@ -37,6 +38,8 @@ export function AttendancePage() {
 
   useEffect(() => {
     loadAttendance();
+    const timer = window.setInterval(() => { if (!document.hidden) loadAttendance(true); }, 5000);
+    return () => window.clearInterval(timer);
   }, [dateFilter]);
 
   useEffect(() => {
@@ -95,6 +98,8 @@ export function AttendancePage() {
 
   return (
     <div className="space-y-6">
+      <p className="text-xs text-muted-foreground">Presenças reconhecidas no totem aparecem automaticamente nesta lista, com nome e horário. Atualização a cada 5 segundos.</p>
+      {loadError && <p role="alert" className="text-sm text-destructive">Não foi possível atualizar a lista: {loadError}</p>}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <input

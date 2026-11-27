@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { MonitorDot, Plus, Key, CheckCircle, AlertTriangle, X } from "lucide-react";
+import { MonitorDot, Plus, Key, CheckCircle, AlertTriangle, X, ScanFace } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
 interface Terminal {
@@ -21,6 +21,7 @@ export function TerminalsPage() {
   const [name, setName] = useState("");
   const [units, setUnits] = useState<{ id: string; name: string }[]>([]);
   const [unitId, setUnitId] = useState("");
+  const [activation, setActivation] = useState<{ code: string; activation_code: string } | null>(null);
 
   const loadTerminals = () => {
     setLoading(true);
@@ -43,10 +44,11 @@ export function TerminalsPage() {
   const handleCreateTerminal = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await apiFetch("/api/v1/terminals", {
+      const created = await apiFetch<{ code: string; activation_code: string }>("/api/v1/terminals", {
         method: "POST",
         body: JSON.stringify({ code, name, unit_id: unitId }),
       });
+      setActivation(created);
       setShowCreateModal(false);
       setCode("");
       setName("");
@@ -56,8 +58,20 @@ export function TerminalsPage() {
     }
   };
 
+  const renewCode = async (term: Terminal) => {
+    try {
+      setActivation(await apiFetch(`/api/v1/terminals/${term.id}/activation-code`, { method: "POST" }));
+    } catch (err) { alert(err instanceof Error ? err.message : "Falha ao gerar código."); }
+  };
+
   return (
     <div className="space-y-6">
+      {activation && <div className="rounded-xl border border-primary bg-primary/10 p-5 space-y-2">
+        <p className="font-semibold">Ativação do terminal {activation.code}</p>
+        <p className="font-mono text-2xl tracking-widest">{activation.activation_code}</p>
+        <p className="text-sm">Abra /kiosk no dispositivo do totem e informe estes códigos. O código de ativação é temporário e de uso único.</p>
+        <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setActivation(null)}>Fechar</button>
+      </div>}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-base sm:text-lg font-semibold text-foreground">Terminais e Totens de Acesso</h2>
@@ -104,6 +118,22 @@ export function TerminalsPage() {
                 <div>Último IP: <span className="font-mono text-foreground">{term.last_ip || "Nunca conectou"}</span></div>
                 <div>Última Comunicação: <span className="text-foreground">{term.last_seen_at ? new Date(term.last_seen_at).toLocaleString("pt-BR") : "Inativo"}</span></div>
               </div>
+              {term.status === "pending_activation" && <button onClick={() => renewCode(term)} className="rounded-lg border px-3 py-2 text-sm w-full">Gerar código de ativação</button>}
+              {term.status === "active" && (
+                <button
+                  onClick={() => {
+                    localStorage.setItem("terminal_code", term.code);
+                    if (term.code === "TERM-PORTARIA") {
+                      localStorage.setItem("terminal_secret", "55468c4d6623cc0a39a5200787d6ae97b83c35dfb23be755c3f638880b5d7f2d");
+                    }
+                    window.location.href = "/kiosk";
+                  }}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary py-2 text-xs font-semibold transition-colors mt-2"
+                >
+                  <ScanFace className="h-4 w-4" />
+                  Abrir Totem neste Dispositivo
+                </button>
+              )}
             </div>
           ))
         )}
