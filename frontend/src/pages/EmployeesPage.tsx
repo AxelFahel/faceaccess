@@ -263,7 +263,7 @@ export function EmployeesPage() {
       {/* Modal Criar Funcionário */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-5 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="font-semibold text-foreground">Novo Funcionário</h3>
               <button
@@ -338,10 +338,10 @@ export function EmployeesPage() {
       {/* Modal Cadastro Biométrico com Câmera */}
       {enrollModalEmployee && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-xl rounded-2xl border bg-card p-6 shadow-2xl">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-5 sm:p-6 shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div>
-                <h3 className="font-semibold text-foreground">
+                <h3 className="font-semibold text-foreground text-sm sm:text-base">
                   Cadastro Facial — {enrollModalEmployee.full_name}
                 </h3>
                 <p className="text-xs text-muted-foreground">
@@ -360,7 +360,7 @@ export function EmployeesPage() {
             </div>
 
             <div className="mt-4 flex flex-col items-center">
-              <div className="relative aspect-video w-full max-w-md overflow-hidden rounded-xl border bg-black">
+              <div className="relative aspect-[4/3] sm:aspect-video w-full max-w-md overflow-hidden rounded-xl border bg-black">
                 <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="h-44 w-36 rounded-full border-2 border-dashed border-primary/70" />
@@ -368,7 +368,7 @@ export function EmployeesPage() {
               </div>
 
               {/* Botões de Captura */}
-              <div className="mt-4 flex items-center gap-3">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                 <button
                   onClick={takePhoto}
                   disabled={captures.length >= 3}
@@ -388,9 +388,9 @@ export function EmployeesPage() {
               </div>
 
               {/* Miniaturas de Capturas */}
-              <div className="mt-4 flex gap-2">
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {captures.map((cap, i) => (
-                  <div key={i} className="relative h-16 w-16 overflow-hidden rounded-lg border">
+                  <div key={i} className="relative h-14 w-14 sm:h-16 sm:w-16 overflow-hidden rounded-lg border">
                     <img src={cap} alt={`Cap ${i}`} className="h-full w-full object-cover" />
                   </div>
                 ))}
@@ -402,7 +402,7 @@ export function EmployeesPage() {
                 </p>
               )}
 
-              <div className="mt-6 flex w-full justify-end gap-2 border-t pt-4">
+              <div className="mt-6 flex w-full flex-col sm:flex-row justify-end gap-2 border-t pt-4">
                 <button
                   type="button"
                   onClick={() => {

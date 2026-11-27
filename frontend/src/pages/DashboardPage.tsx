@@ -69,22 +69,22 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((s) => {
           const Icon = s.icon;
           return (
             <div
               key={s.label}
-              className="rounded-xl border bg-card p-5 shadow-sm transition-all hover:shadow"
+              className="rounded-xl border bg-card p-4 sm:p-5 shadow-sm transition-all hover:shadow"
             >
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground">{s.label}</span>
+                <span className="text-xs sm:text-sm font-medium text-muted-foreground">{s.label}</span>
                 <div className="rounded-lg bg-primary/10 p-2 text-primary">
                   <Icon className="h-5 w-5" />
                 </div>
               </div>
               <div className="mt-3">
-                <div className="text-2xl font-bold tracking-tight text-foreground">
+                <div className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
                   {loading ? "..." : s.value}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{s.sub}</p>
@@ -95,13 +95,13 @@ export function DashboardPage() {
       </div>
 
       {/* Gráficos */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+        <div className="rounded-xl border bg-card p-4 sm:p-5 shadow-sm min-w-0">
           <div className="mb-4">
-            <h3 className="font-semibold text-foreground">Fluxo de Presença por Horário (Hoje)</h3>
+            <h3 className="font-semibold text-foreground text-sm sm:text-base">Fluxo de Presença por Horário (Hoje)</h3>
             <p className="text-xs text-muted-foreground">Registros biométricos 1:1 e PIN autorizados</p>
           </div>
-          <div className="h-64 w-full">
+          <div className="h-56 sm:h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={mockAttendanceHistory}>
                 <defs>
@@ -120,12 +120,12 @@ export function DashboardPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="rounded-xl border bg-card p-4 sm:p-5 shadow-sm min-w-0">
           <div className="mb-4">
-            <h3 className="font-semibold text-foreground">Decisões de Controle de Acesso</h3>
+            <h3 className="font-semibold text-foreground text-sm sm:text-base">Decisões de Controle de Acesso</h3>
             <p className="text-xs text-muted-foreground">Acessos físicos autorizados vs restrições de escala</p>
           </div>
-          <div className="h-64 w-full">
+          <div className="h-56 sm:h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={[

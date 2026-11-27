@@ -43,7 +43,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       {/* Mobile Drawer Overlay */}
       {mobileOpen && (
         <div
@@ -56,7 +56,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-card transition-all duration-300 lg:static",
-          mobileOpen ? "translate-x-0 w-64 shadow-2xl" : "-translate-x-full lg:translate-x-0",
+          mobileOpen ? "translate-x-0 w-72 max-w-[85vw] shadow-2xl" : "-translate-x-full lg:translate-x-0",
           collapsed ? "lg:w-20" : "lg:w-64"
         )}
       >
@@ -81,7 +81,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 setCollapsed(!collapsed);
               }
             }}
-            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted"
+            className="rounded-lg p-2 text-muted-foreground hover:bg-muted"
+            aria-label="Alternar Menu"
           >
             <X className="h-5 w-5 lg:hidden" />
             <span className="hidden lg:inline">

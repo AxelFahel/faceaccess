@@ -113,17 +113,17 @@ export function AttendancePage() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setShowManualModal(true)}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            className="flex items-center gap-2 rounded-lg bg-primary px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
           >
             <Plus className="h-4 w-4" />
             Lançar Ponto Manual
           </button>
           <button
             onClick={handleDownloadCsv}
-            className="flex items-center gap-2 rounded-lg border bg-card px-4 py-2 text-sm font-medium hover:bg-muted transition-colors"
+            className="flex items-center gap-2 rounded-lg border bg-card px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium hover:bg-muted transition-colors"
           >
             <Download className="h-4 w-4" />
             Exportar CSV
@@ -187,7 +187,7 @@ export function AttendancePage() {
       {/* Modal Lançamento Manual de Ponto */}
       {showManualModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-5 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="font-semibold text-foreground">Lançamento de Ponto Manual</h3>
               <button

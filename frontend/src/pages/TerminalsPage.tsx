@@ -58,14 +58,14 @@ export function TerminalsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Terminais e Totens de Acesso</h2>
+          <h2 className="text-base sm:text-lg font-semibold text-foreground">Terminais e Totens de Acesso</h2>
           <p className="text-xs text-muted-foreground">Dispositivos autorizados a operar em modo kiosk local</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 self-start sm:self-auto"
         >
           <Plus className="h-4 w-4" />
           Novo Terminal
@@ -111,7 +111,7 @@ export function TerminalsPage() {
 
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-5 sm:p-6 shadow-xl">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="font-semibold text-foreground">Novo Terminal Kiosk</h3>
               <button onClick={() => setShowCreateModal(false)} className="text-muted-foreground hover:text-foreground">
