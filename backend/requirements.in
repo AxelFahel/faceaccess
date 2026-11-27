@@ -1,0 +1,23 @@
+# FaceAccess backend — direct dependencies (lower bounds).
+# Exact, hash-pinned versions are generated into requirements.txt via:
+#   uv pip compile requirements.in -o requirements.txt --python-version 3.12 --python-platform x86_64-manylinux_2_28 --generate-hashes
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32
+pydantic>=2.9,<3
+pydantic-settings>=2.6
+email-validator>=2.2
+sqlalchemy>=2.0.36,<2.1
+psycopg[binary]>=3.2
+alembic>=1.14
+argon2-cffi>=23.1
+pyjwt>=2.10
+pyotp>=2.9
+cryptography>=43
+python-multipart>=0.0.18
+openpyxl>=3.1
+reportlab>=4.2
+# Biometric engine (CPU build of ONNX Runtime; GPU image swaps onnxruntime-gpu)
+uniface==4.3.0
+onnxruntime>=1.20
+opencv-python-headless>=4.10
+numpy>=1.26

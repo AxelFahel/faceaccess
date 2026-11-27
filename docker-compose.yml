@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: faceaccess-db
+    restart: always
+    environment:
+      POSTGRES_DB: faceaccess
+      POSTGRES_USER: ${POSTGRES_USER:-faceaccess_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-FaceAccessPass2026!}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U faceaccess_user -d faceaccess"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: faceaccess-backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-faceaccess_user}:${POSTGRES_PASSWORD:-FaceAccessPass2026!}@db:5432/faceaccess
+      JWT_SECRET: ${JWT_SECRET:-super-secret-jwt-key-with-at-least-32-chars!}
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:-super-secret-audit-hmac-key-min-32-bytes!}
+      BIOMETRIC_KEYS: '{"k1": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+      BIOMETRIC_ACTIVE_KEY_ID: "k1"
+      DATA_ENCRYPTION_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+      UNIFACE_CACHE_DIR: /models
+      BIOMETRIC_ENGINE: uniface
+      APP_ENV: production
+      COOKIE_SECURE: "false"
+      ENABLE_API_DOCS: "true"
+    volumes:
+      - models-cache:/models
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/api/v1/health\")'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: faceaccess-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - internal-net
+
+volumes:
+  pgdata:
+  models-cache:
+
+networks:
+  internal-net:
+    driver: bridge

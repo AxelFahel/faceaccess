@@ -1,0 +1,52 @@
+# FaceAccess — Sistema de Controle de Acesso e Presença Biométrica Facial
+
+Sistema corporativo completo, modular e seguro para gestão de colaboradores, controle de acesso físico e registro de presença por verificação biométrica facial 1:1, utilizando os modelos oficiais e licenças permissivas da biblioteca **UniFace**.
+
+Desenvolvido para execução **100% local e privada**, sem tráfego de fotografias, dados sensíveis ou representações biométricas para serviços externos.
+
+---
+
+## 🚀 Tecnologias
+
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons, Recharts.
+- **Backend**: Python 3.12, FastAPI, SQLAlchemy 2.0, Pydantic v2, Argon2id, PyJWT, Cryptography.
+- **Biometria (UniFace)**:
+  - *Detector*: RetinaFace MobileNetV2 (MIT)
+  - *Extrator de Embeddings*: AdaFace IR-18 512-D (MIT)
+  - *Liveness / Anti-Spoofing*: MiniFASNet V2 (Apache-2.0)
+  - *Qualidade da Imagem*: eDifFIQA-T (MIT)
+- **Banco de Dados**: PostgreSQL 16 (UUIDv4, Esquema segregado, Criptografia AES-256-GCM para templates).
+- **DevOps**: Docker, Docker Compose, Nginx.
+
+---
+
+## 📋 Pré-requisitos
+
+- Docker & Docker Compose instalados.
+- Ou Python 3.11/3.12 e Node.js 20+ para desenvolvimento local.
+
+---
+
+## 🛠️ Inicialização Rápida (Docker Compose)
+
+1. **Clonar e configurar o ambiente:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Subir os serviços:**
+   ```bash
+   docker compose up -d --build
+   ```
+
+3. **Acessar as interfaces locais:**
+   - **Painel Administrativo**: [http://localhost](http://localhost)
+   - **Terminal Modo Kiosk**: [http://localhost/kiosk](http://localhost/kiosk)
+   - **Documentação da API (OpenAPI/Swagger)**: [http://localhost/api/docs](http://localhost/api/docs)
+
+---
+
+## 🔒 Credenciais Padrão de Inicialização
+
+- **E-mail**: `admin@faceaccess.com`
+- **Senha**: `Admin@Secure2026!`
