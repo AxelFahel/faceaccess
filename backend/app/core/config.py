@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "FaceAccess"
-    app_version: str = "0.1.0"
+    app_version: str = "1.0.0"
     app_env: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
 

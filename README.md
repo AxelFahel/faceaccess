@@ -60,3 +60,22 @@ As requisições têm limite de espera de 30 segundos (60 segundos para a grava�
 
 - **E-mail**: `admin@faceaccess.com`
 - **Senha**: `Admin@Secure2026!`
+
+---
+
+## 🏷️ Versão 1.0.0 (Release Notes)
+
+- **Biometria 1:1 UniFace**: Modelos locais de inferência com licenças permissivas comerciais (RetinaFace, AdaFace IR-18, MiniFASNet V2 e eDifFIQA-T).
+- **Totem Kiosk Autônomo**:
+  - Reconhecimento facial contínuo sem toques na tela;
+  - Validação visual com feedback animado em verde (autorizado/registrado) e vermelho (rejeitado/não autorizado);
+  - Gravação automática de presença no horário oficial do servidor;
+  - Alternativa contingencial por matrícula e PIN.
+- **Suporte Mobile e HTTPS Local**:
+  - HMR e servidor com certificado SSL automático (`@vitejs/plugin-basic-ssl`);
+  - Viewports e controles otimizados para smartphones, tablets e totens dedicados;
+  - Compatibilidade com captura direta de câmera nativa de smartphones.
+- **Conformidade LGPD**:
+  - Descarte imediato das imagens capturadas após extração do vetor biométrico;
+  - Armazenamento em envelope criptográfico autenticado AES-256-GCM;
+  - Trilha de auditoria encadeada com assinaturas HMAC-SHA-256 (tamper-evident).
