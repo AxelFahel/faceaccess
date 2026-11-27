@@ -60,7 +60,7 @@ def test_login_flow(client):
     assert "access_token" in data
     assert data["user"]["email"] == "admin@faceaccess.com"
 
-def test_employee_and_kiosk_flow(client):
+def test_employee_and_kiosk_flow(client, monkeypatch):
     # 1. Login as admin
     login_res = client.post(
         "/api/v1/auth/login",
@@ -95,11 +95,42 @@ def test_employee_and_kiosk_flow(client):
     # 4. Enroll fake biometrics
     lb = client.get("/api/v1/privacy/legal-basis", headers=headers).json()[0]
     dummy_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    capture_payload = {"employee_id": emp_id, "image_base64": dummy_b64}
+    assert client.post("/api/v1/biometrics/capture-check", json=capture_payload).status_code == 401
+    check = client.post("/api/v1/biometrics/capture-check", json=capture_payload, headers=headers)
+    assert check.status_code == 200
+    assert check.json()["accepted"] is True
+    assert check.json()["required_captures"] == 3
+
+    # A frame without a face must never advance the enrollment guide.
+    from app.biometrics.engine import get_biometric_engine
+    with monkeypatch.context() as patch:
+        patch.setattr(get_biometric_engine(), "process_face", lambda *a, **kw: None)
+        rejected = client.post("/api/v1/biometrics/capture-check", json=capture_payload, headers=headers)
+        assert rejected.json()["accepted"] is False
+
+    # Missing liveness fails closed both in the guide and the final write.
+    from dataclasses import replace
+    import numpy as np
+    feature = get_biometric_engine().process_face(np.zeros((1, 1, 3), dtype=np.uint8))
+    with monkeypatch.context() as patch:
+        patch.setattr(get_biometric_engine(), "process_face", lambda *a, **kw: replace(feature, liveness=None))
+        rejected = client.post("/api/v1/biometrics/capture-check", json=capture_payload, headers=headers)
+        assert rejected.json()["accepted"] is False
+        rejected_enrollment = client.post("/api/v1/biometrics/enroll", json={
+            "employee_id": emp_id, "images_base64": [dummy_b64] * 3, "legal_basis_record_id": lb["id"],
+        }, headers=headers)
+        assert rejected_enrollment.status_code == 422
+
+    incomplete = client.post("/api/v1/biometrics/enroll", json={
+        "employee_id": emp_id, "images_base64": [dummy_b64], "legal_basis_record_id": lb["id"],
+    }, headers=headers)
+    assert incomplete.status_code == 422
     enroll_res = client.post(
         "/api/v1/biometrics/enroll",
         json={
             "employee_id": emp_id,
-            "images_base64": [dummy_b64, dummy_b64],
+            "images_base64": [dummy_b64] * 3,
             "legal_basis_record_id": lb["id"],
         },
         headers=headers,

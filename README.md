@@ -4,6 +4,16 @@ Sistema corporativo completo, modular e seguro para gestão de colaboradores, co
 
 Desenvolvido para execução **100% local e privada**, sem tráfego de fotografias, dados sensíveis ou representações biométricas para serviços externos.
 
+O cadastro facial usa o [UniFace oficial](https://github.com/yakhyo/uniface), fixado na versão 4.3.0. A tela de selfie guiada captura pela câmera, analisa cada imagem no servidor e solicita três capturas aprovadas (configurável por `ENROLLMENT_CAPTURES`, entre 1 e 5). RetinaFace verifica o enquadramento, eDifFIQA avalia a qualidade, MiniFASNet faz a análise passiva de vivacidade e AdaFace gera a representação facial. O servidor repete as verificações e confere a consistência entre as capturas antes de gravar o template criptografado.
+
+A câmera requer HTTPS ou localhost. O fluxo não integra a conta ou as bases biométricas do gov.br, nem implementa desafios ativos de movimentos. A análise passiva precisa ser validada com câmeras e condições reais antes do uso operacional; testes com o motor `fake` não medem resistência a fraude.
+
+Ao abrir o cadastro, a orientação por voz já inicia habilitada e a câmera captura automaticamente, uma imagem por vez, com intervalo entre análises. Somente capturas aprovadas avançam o progresso; ao completar a quantidade exigida, o cadastro é salvo automaticamente. É possível pausar, refazer, silenciar ou repetir a orientação. Falhas de comunicação ou 15 reprovações consecutivas pausam o fluxo; a gravação não é repetida automaticamente após erro. A captura também pausa enquanto a aba fica oculta.
+
+A voz usa um serviço local em português disponível no dispositivo; se indisponível ou bloqueada pelo navegador, a tela informa o problema e mantém as instruções escritas. O microfone não é utilizado.
+
+As requisições têm limite de espera de 30 segundos (60 segundos para a gravação final). Ao ocorrer timeout na gravação, confira a lista antes de repetir: interromper a espera no navegador não desfaz uma operação já recebida pelo servidor. Os modelos devem ser preparados previamente com `scripts/download_models.py` e `UNIFACE_CACHE_DIR`; a captura não inicia downloads. Depois de atualizar o código Python, reinicie o backend para carregar as novas rotas.
+
 ---
 
 ## 🚀 Tecnologias

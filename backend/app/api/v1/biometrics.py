@@ -19,11 +19,13 @@ from app.core.crypto import (
     serialize_template,
     template_aad,
 )
-from app.core.errors import NotFound, ValidationFailed
+from app.core.errors import Forbidden, NotFound, ValidationFailed
 from app.db.session import get_db
 from app.models.biometric import BiometricEnrollment, EnrollmentStatus
 from app.models.employee import BiometricStatus, Employee
+from app.models.privacy import LegalBasisRecord
 from app.schemas.dto import (
+    BiometricCaptureRequest,
     BiometricEnrollmentRequest,
     BiometricEnrollmentResponse,
     MessageResponse,
@@ -31,6 +33,59 @@ from app.schemas.dto import (
 from app.services.audit import AuditService
 
 router = APIRouter(prefix="/biometrics", tags=["Biometria Facial"])
+
+
+@router.get("/enrollment-options")
+def enrollment_options(
+    principal: AuthenticatedPrincipal = Depends(require_permission("biometrics:enroll")),
+    db: Session = Depends(get_db),
+):
+    bases = db.execute(select(LegalBasisRecord).where(
+        LegalBasisRecord.organization_id == principal.organization_id,
+        LegalBasisRecord.is_active == True,
+    ).order_by(LegalBasisRecord.created_at)).scalars().all()
+    return {
+        "required_captures": get_settings().enrollment_captures,
+        "legal_bases": [{"id": str(b.id)} for b in bases],
+    }
+
+
+def _scoped_employee(db, employee_id, principal):
+    emp = db.get(Employee, employee_id)
+    if not emp:
+        raise NotFound("Funcionário não encontrado.")
+    if (emp.organization_id != principal.organization_id
+            or not principal.can_access_unit(emp.unit_id)
+            or not principal.can_access_department(emp.department_id)):
+        raise Forbidden("Funcionário fora do seu escopo de acesso.")
+    return emp
+
+
+@router.post("/capture-check")
+def check_capture(
+    req: BiometricCaptureRequest,
+    principal: AuthenticatedPrincipal = Depends(require_permission("biometrics:enroll")),
+    db: Session = Depends(get_db),
+):
+    """Transient guidance only; enrollment independently repeats every check."""
+    _scoped_employee(db, req.employee_id, principal)
+    s = get_settings()
+    feature = get_biometric_engine().process_face(_decode_image(req.image_base64), check_liveness=True, include_embedding=False)
+    reasons = []
+    if not feature:
+        reasons.append("Posicione seu rosto dentro da marcação e olhe para a câmera.")
+    else:
+        reasons.extend(feature.quality.errors)
+        if not feature.quality.passed and not reasons:
+            reasons.append("Ajuste o enquadramento e a iluminação.")
+        if not feature.liveness or not feature.liveness.is_real:
+            reasons.append("Vivacidade não confirmada. Use a câmera ao vivo, em um local bem iluminado.")
+    return {
+        "accepted": not reasons,
+        "message": reasons[0] if reasons else "Captura aprovada. Mantenha o rosto na marcação.",
+        "reasons": reasons,
+        "required_captures": s.enrollment_captures,
+    }
 
 
 def _decode_image(b64_str: str) -> np.ndarray:
@@ -55,9 +110,12 @@ def enroll_face(
     db: Session = Depends(get_db),
 ):
     s = get_settings()
-    emp = db.get(Employee, req.employee_id)
-    if not emp:
-        raise NotFound("Funcionário não encontrado.")
+    emp = _scoped_employee(db, req.employee_id, principal)
+    if len(req.images_base64) != s.enrollment_captures:
+        raise ValidationFailed(f"Envie {s.enrollment_captures} capturas aprovadas para concluir o cadastro.")
+    basis = db.get(LegalBasisRecord, req.legal_basis_record_id)
+    if not basis or not basis.is_active or basis.organization_id != emp.organization_id:
+        raise ValidationFailed("Base legal ativa não encontrada para esta organização.")
 
     engine = get_biometric_engine()
 
@@ -67,7 +125,7 @@ def enroll_face(
 
     for idx, b64_img in enumerate(req.images_base64):
         img_bgr = _decode_image(b64_img)
-        feature = engine.process_face(img_bgr, check_liveness=s.liveness_enabled)
+        feature = engine.process_face(img_bgr, check_liveness=True)
         if not feature:
             raise ValidationFailed(f"Nenhum rosto detectado na captura #{idx + 1}.")
 
@@ -75,10 +133,9 @@ def enroll_face(
             err_msg = "; ".join(feature.quality.errors)
             raise ValidationFailed(f"Qualidade insuficiente na captura #{idx + 1}: {err_msg}")
 
-        if feature.liveness and not feature.liveness.is_real:
+        if not feature.liveness or not feature.liveness.is_real:
             raise ValidationFailed(
-                f"Falha na prova de vivacidade na captura #{idx + 1} "
-                f"(confiança: {feature.liveness.confidence:.2f})."
+                f"Falha na prova de vivacidade na captura #{idx + 1}."
             )
 
         embeddings.append(feature.embedding)

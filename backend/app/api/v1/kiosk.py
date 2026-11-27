@@ -20,7 +20,7 @@ from app.core.crypto import (
     deserialize_template,
     template_aad,
 )
-from app.core.errors import ValidationFailed
+from app.core.errors import Forbidden, ValidationFailed
 from app.core.security import verify_secret
 from app.core.timeutil import local_today, utcnow
 from app.db.session import get_db
@@ -38,6 +38,73 @@ from app.schemas.dto import KioskVerifyRequest, KioskVerifyResponse
 from app.services.audit import AuditService
 
 router = APIRouter(prefix="/kiosk", tags=["Terminal & Kiosk"])
+
+
+@router.get("/terminal")
+def terminal_info(
+    principal: AuthenticatedPrincipal = Depends(get_current_terminal),
+    db: Session = Depends(get_db),
+):
+    terminal = db.get(Terminal, principal.id)
+    terminal.last_seen_at = utcnow()
+    db.commit()
+    return {"code": terminal.code, "name": terminal.name, "allowed_operations": terminal.allowed_operations}
+
+
+def _capture_problem(feature, require_liveness=True):
+    if feature is None:
+        return KioskVerifyResponse(status="inconclusive", message="Posicione seu rosto na marcação.", retryable=True)
+    if not feature.quality.passed:
+        return KioskVerifyResponse(
+            status="inconclusive", message=" ".join(feature.quality.errors) or "Ajuste a posição e a iluminação.",
+            quality_score=feature.quality.score, retryable=True,
+        )
+    if require_liveness and (not feature.liveness or not feature.liveness.is_real):
+        return KioskVerifyResponse(status="rejected", message="Vivacidade não confirmada. Olhe diretamente para a câmera.", liveness_passed=False, retryable=True)
+    return None
+
+
+def _identify_in_unit(db, terminal, feature, engine, settings):
+    """Compare once-extracted features only with active enrollments in this terminal's unit."""
+    rows = db.execute(
+        select(Employee, BiometricEnrollment)
+        .join(BiometricEnrollment, BiometricEnrollment.employee_id == Employee.id)
+        .where(
+            Employee.unit_id == terminal.unit_id,
+            Employee.employment_status == EmploymentStatus.ACTIVE,
+            Employee.biometric_status == BiometricStatus.ENROLLED,
+            BiometricEnrollment.status == EnrollmentStatus.ACTIVE,
+        )
+    ).all()
+    keyring = biometric_key_ring()
+    # Rank people, not enrollments, to avoid treating duplicate templates as two identities.
+    candidates = {}
+    for emp, enrollment in rows:
+        if (enrollment.engine_version != engine.version or not enrollment.key_id
+                or not enrollment.template_nonce or not enrollment.template_ciphertext):
+            continue
+        try:
+            vector = deserialize_template(keyring.decrypt(
+                EncryptedBlob(enrollment.key_id, enrollment.template_nonce, enrollment.template_ciphertext),
+                template_aad(str(enrollment.id), str(emp.id), enrollment.engine_version),
+            ))
+            if vector.shape != feature.embedding.shape:
+                continue
+            score = float(engine.compute_similarity(vector, feature.embedding))
+        except Exception:
+            continue  # An unreadable template must never authorize a person.
+        if np.isfinite(score) and (emp.id not in candidates or score > candidates[emp.id][0]):
+            candidates[emp.id] = (score, emp, enrollment)
+    ranked = sorted(candidates.values(), key=lambda item: item[0], reverse=True)
+    if not ranked or ranked[0][0] < settings.match_threshold:
+        return None, None, KioskVerifyResponse(
+            status="rejected", message="Rosto não reconhecido nesta unidade. Procure o responsável ou utilize matrícula e PIN.", retryable=True,
+        )
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < settings.identification_min_margin:
+        return None, None, KioskVerifyResponse(
+            status="inconclusive", message="Não foi possível distinguir a identidade com segurança. Utilize matrícula e PIN.",
+        )
+    return ranked[0][1], ranked[0][2], None
 
 
 def _decode_image(b64_str: str) -> np.ndarray:
@@ -67,16 +134,36 @@ def kiosk_verify(
     # 1. Update terminal last seen
     terminal = db.get(Terminal, terminal_auth.id)
     if terminal:
+        if req.operation_type not in terminal.allowed_operations:
+            raise Forbidden("Operação não permitida para este terminal.")
+        if req.method == "pin" and "pin_fallback" not in terminal.allowed_operations:
+            raise Forbidden("Verificação por PIN não permitida neste terminal.")
         terminal.last_seen_at = now
         terminal.last_ip = request.state.client_ip
 
-    # 2. Look up employee by identifier (1:1 declared identity)
+    # 2. Automatic identification, or declared identity for PIN / legacy 1:1 clients.
     ident = req.identifier.strip()
-    emp = db.execute(
-        select(Employee).where(
-            (Employee.registration_number == ident) | (Employee.badge_code == ident)
-        )
-    ).scalar_one_or_none()
+    feature = None
+    selected_enrollment = None
+    if req.method == "face" and not ident:
+        if not terminal or not req.image_base64:
+            raise ValidationFailed("Captura facial e terminal ativo são obrigatórios.")
+        engine = get_biometric_engine()
+        feature = engine.process_face(_decode_image(req.image_base64), check_liveness=True)
+        problem = _capture_problem(feature)
+        if problem:
+            return problem
+        emp, selected_enrollment, problem = _identify_in_unit(db, terminal, feature, engine, s)
+        if problem:
+            return problem
+    else:
+        if not ident:
+            raise ValidationFailed("Informe a matrícula ou crachá para utilizar PIN.")
+        emp = db.execute(
+            select(Employee).where(
+                (Employee.registration_number == ident) | (Employee.badge_code == ident)
+            )
+        ).scalar_one_or_none()
 
     if not emp:
         return KioskVerifyResponse(
@@ -146,7 +233,7 @@ def kiosk_verify(
         if not req.image_base64:
             raise ValidationFailed("Captura facial ausente para verificação biométrica.")
 
-        enrollment = db.execute(
+        enrollment = selected_enrollment or db.execute(
             select(BiometricEnrollment).where(
                 BiometricEnrollment.employee_id == emp.id,
                 BiometricEnrollment.status == EnrollmentStatus.ACTIVE,
@@ -163,8 +250,9 @@ def kiosk_verify(
 
         # Process input capture
         engine = get_biometric_engine()
-        img_bgr = _decode_image(req.image_base64)
-        feature = engine.process_face(img_bgr, check_liveness=s.liveness_enabled)
+        if feature is None:
+            img_bgr = _decode_image(req.image_base64)
+            feature = engine.process_face(img_bgr, check_liveness=s.liveness_enabled)
 
         if not feature:
             return KioskVerifyResponse(
@@ -172,6 +260,7 @@ def kiosk_verify(
                 message="Nenhum rosto detectado na câmera. Posicione-se em frente ao visor.",
                 employee_name=emp.full_name,
                 reasons=["Rosto não detectado"],
+                retryable=True,
             )
 
         quality_score = feature.quality.score
@@ -183,8 +272,11 @@ def kiosk_verify(
                 employee_name=emp.full_name,
                 quality_score=quality_score,
                 reasons=feature.quality.errors,
+                retryable=True,
             )
 
+        if s.liveness_enabled and not feature.liveness:
+            return KioskVerifyResponse(status="rejected", message="Não foi possível confirmar a vivacidade.", retryable=True)
         if feature.liveness:
             liveness_passed = feature.liveness.is_real
             if not liveness_passed:
@@ -194,6 +286,7 @@ def kiosk_verify(
                     employee_name=emp.full_name,
                     liveness_passed=False,
                     reasons=["Falha na prova de vivacidade"],
+                    retryable=True,
                 )
 
         # Decrypt registered template
@@ -229,7 +322,7 @@ def kiosk_verify(
     v_event = VerificationEvent(
         employee_id=emp.id,
         terminal_id=terminal.id if terminal else None,
-        identifier_type="registration",
+        identifier_type="face" if not ident else "registration",
         method=method,
         outcome=verification_outcome,
         similarity=similarity,
@@ -252,6 +345,7 @@ def kiosk_verify(
             quality_score=quality_score,
             liveness_passed=liveness_passed,
             reasons=reasons,
+            retryable=verification_outcome == "inconclusive",
         )
 
     # 5. Authorization & Access Decision Check (Independent of biometric verification)
@@ -278,6 +372,8 @@ def kiosk_verify(
     # 6. Record Attendance if granted and requested
     att_record_id: uuid.UUID | None = None
     if access_decision == "granted" and req.operation_type == "attendance":
+        # Serialize attendance writes for this person on PostgreSQL.
+        db.execute(select(Employee.id).where(Employee.id == emp.id).with_for_update()).scalar_one()
         rec_type = req.record_type or RecordType.ENTRY
         # Anti-duplicate check
         recent_window = now - timedelta(seconds=s.attendance_duplicate_window_seconds)
@@ -286,7 +382,7 @@ def kiosk_verify(
                 AttendanceRecord.employee_id == emp.id,
                 AttendanceRecord.recorded_at >= recent_window,
                 AttendanceRecord.status == "valid",
-            )
+            ).limit(1)
         ).scalar_one_or_none()
 
         if dup:

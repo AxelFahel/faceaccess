@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     biometric_providers: list[str] = ["CPUExecutionProvider"]
     # Cosine similarity thresholds (AdaFace IR-18). MUST be calibrated locally.
     match_threshold: float = 0.45
+    identification_min_margin: float = Field(0.08, ge=0, le=2)
     inconclusive_threshold: float = 0.30
     liveness_threshold: float = 0.70
     liveness_enabled: bool = True
@@ -86,7 +87,7 @@ class Settings(BaseSettings):
     min_brightness: float = 60.0
     max_brightness: float = 200.0
     min_sharpness: float = 40.0
-    enrollment_captures: int = 3
+    enrollment_captures: int = Field(3, ge=1, le=5)
     enrollment_min_consistency: float = 0.55
 
     # --- Background jobs ------------------------------------------------

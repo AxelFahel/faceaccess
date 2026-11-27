@@ -5,15 +5,16 @@ import csv
 import io
 import math
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import AuthenticatedPrincipal, require_permission
-from app.core.crypto import random_numeric_code, random_token, sha256_hex
-from app.core.errors import NotFound
+from app.core.crypto import constant_time_equals, random_numeric_code, random_token, sha256_hex
+from app.core.errors import Forbidden, NotFound
+from app.core.config import get_settings
 from app.core.timeutil import local_day_bounds_utc, local_today, utcnow
 from app.db.session import get_db
 from app.models.access import AccessEvent, Terminal, TerminalStatus
@@ -31,6 +32,7 @@ from app.schemas.dto import (
     TerminalActivateRequest,
     TerminalActivateResponse,
     TerminalCreate,
+    TerminalCreated,
     TerminalRead,
     UnitCreate,
     UnitRead,
@@ -116,7 +118,7 @@ def list_terminals(
     return db.execute(select(Terminal).order_by(Terminal.name.asc())).scalars().all()
 
 
-@terminals_router.post("", response_model=TerminalRead)
+@terminals_router.post("", response_model=TerminalCreated)
 def create_terminal(
     req: TerminalCreate,
     principal: AuthenticatedPrincipal = Depends(require_permission("terminals:manage")),
@@ -133,12 +135,33 @@ def create_terminal(
         allowed_operations=req.allowed_operations,
         status=TerminalStatus.PENDING,
         activation_code_hash=act_hash,
-        activation_expires_at=utcnow() + datetime.timedelta(hours=24) if hasattr(datetime, "timedelta") else utcnow(),
+        activation_expires_at=utcnow() + timedelta(minutes=get_settings().terminal_activation_ttl_minutes),
     )
     db.add(term)
     db.commit()
     db.refresh(term)
-    return TerminalRead.model_validate(term)
+    return TerminalCreated(**TerminalRead.model_validate(term).model_dump(), activation_code=activation_code)
+
+
+@terminals_router.post("/{terminal_id}/activation-code")
+def renew_activation_code(
+    terminal_id: uuid.UUID,
+    principal: AuthenticatedPrincipal = Depends(require_permission("terminals:manage")),
+    db: Session = Depends(get_db),
+):
+    term = db.get(Terminal, terminal_id)
+    if not term:
+        raise NotFound("Terminal não encontrado.")
+    unit = db.get(Unit, term.unit_id)
+    if not unit or unit.organization_id != principal.organization_id or not principal.can_access_unit(term.unit_id):
+        raise Forbidden("Terminal fora do seu escopo de acesso.")
+    if term.status != TerminalStatus.PENDING:
+        raise Forbidden("Somente terminais pendentes podem receber código de ativação.")
+    code = random_numeric_code(8)
+    term.activation_code_hash = sha256_hex(code)
+    term.activation_expires_at = utcnow() + timedelta(minutes=get_settings().terminal_activation_ttl_minutes)
+    db.commit()
+    return {"code": term.code, "activation_code": code}
 
 
 @terminals_router.post("/activate", response_model=TerminalActivateResponse)
@@ -146,9 +169,17 @@ def activate_terminal(
     req: TerminalActivateRequest,
     db: Session = Depends(get_db),
 ):
-    term = db.execute(select(Terminal).where(Terminal.code == req.code)).scalar_one_or_none()
+    term = db.execute(select(Terminal).where(Terminal.code == req.code).with_for_update()).scalar_one_or_none()
     if not term:
         raise NotFound("Terminal não encontrado.")
+
+    expires = term.activation_expires_at
+    if expires and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    if (term.status != TerminalStatus.PENDING or not term.activation_code_hash
+            or not expires or expires <= utcnow()
+            or not constant_time_equals(sha256_hex(req.activation_code), term.activation_code_hash)):
+        raise Forbidden("Código de ativação inválido, expirado ou já utilizado.")
 
     # Generate permanent secret
     secret = random_token(32)

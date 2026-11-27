@@ -24,6 +24,12 @@ logs/
 dumps/
 exports/
 models/
+!backend/app/models/
+!backend/app/models/**
+!backend/app/biometrics/
+!backend/app/biometrics/**
+!frontend/src/components/biometrics/
+!frontend/src/components/biometrics/**
 *.sql
 *.sql.gz
 *.dump

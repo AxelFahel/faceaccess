@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -188,6 +188,11 @@ class EmployeeUpdate(BaseModel):
 
 
 # --- Biometrics ---
+class BiometricCaptureRequest(BaseModel):
+    employee_id: uuid.UUID
+    image_base64: str = Field(..., min_length=1, max_length=4_000_000)
+
+
 class BiometricEnrollmentRequest(BaseModel):
     employee_id: uuid.UUID
     # Array of Base64-encoded JPEG/PNG images from voluntary enrollment
@@ -228,6 +233,10 @@ class TerminalCreate(BaseModel):
     allowed_operations: list[str] = ["attendance", "pin_fallback"]
 
 
+class TerminalCreated(TerminalRead):
+    activation_code: str
+
+
 class TerminalActivateRequest(BaseModel):
     code: str
     activation_code: str
@@ -242,12 +251,12 @@ class TerminalActivateResponse(BaseModel):
 
 # --- Kiosk 1:1 Verification & Attendance ---
 class KioskVerifyRequest(BaseModel):
-    identifier: str  # registration_number or badge_code
-    method: str = "face"  # face | pin
+    identifier: str = ""  # empty for automatic face identification; required for PIN
+    method: Literal["face", "pin"] = "face"
     image_base64: str | None = None
     pin: str | None = None
-    operation_type: str = "attendance"  # attendance | access
-    record_type: str | None = None  # entry | exit | break_start | break_end
+    operation_type: Literal["attendance", "access"] = "attendance"
+    record_type: Literal["entry", "exit", "break_start", "break_end"] | None = None
 
 
 class KioskVerifyResponse(BaseModel):
@@ -261,6 +270,7 @@ class KioskVerifyResponse(BaseModel):
     quality_score: float | None = None
     liveness_passed: bool | None = None
     reasons: list[str] = []
+    retryable: bool = False
 
 
 # --- Attendance & Reports ---
