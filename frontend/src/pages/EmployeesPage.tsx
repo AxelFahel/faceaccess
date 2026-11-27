@@ -175,87 +175,89 @@ export function EmployeesPage() {
 
       {/* Employees Table */}
       <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
-            <tr>
-              <th className="px-6 py-3">Funcionário</th>
-              <th className="px-6 py-3">Matrícula</th>
-              <th className="px-6 py-3">Status Funcional</th>
-              <th className="px-6 py-3">Biometria Facial</th>
-              <th className="px-6 py-3 text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y text-foreground">
-            {loading ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="border-b bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
-                  Carregando colaboradores...
-                </td>
+                <th className="px-4 sm:px-6 py-3">Funcionário</th>
+                <th className="px-4 sm:px-6 py-3">Matrícula</th>
+                <th className="px-4 sm:px-6 py-3">Status Funcional</th>
+                <th className="px-4 sm:px-6 py-3">Biometria Facial</th>
+                <th className="px-4 sm:px-6 py-3 text-right">Ações</th>
               </tr>
-            ) : employees.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
-                  Nenhum funcionário encontrado.
-                </td>
-              </tr>
-            ) : (
-              employees.map((emp) => (
-                <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="font-medium text-foreground">{emp.full_name}</div>
-                    <div className="text-xs text-muted-foreground">{emp.email}</div>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-xs text-muted-foreground">
-                    {emp.registration_number}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                      {emp.employment_status === "active" ? "Ativo" : emp.employment_status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {emp.biometric_status === "enrolled" ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        Cadastrada
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-                        <ShieldAlert className="h-3.5 w-3.5" />
-                        Pendente
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {emp.biometric_status === "enrolled" ? (
-                        <button
-                          onClick={() => handleRevoke(emp)}
-                          className="rounded-lg p-1.5 text-destructive hover:bg-destructive/10"
-                          title="Revogar Biometria"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setEnrollModalEmployee(emp);
-                            setCaptures([]);
-                            startCamera();
-                          }}
-                          className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20"
-                        >
-                          <Camera className="h-3.5 w-3.5" />
-                          Cadastrar Face
-                        </button>
-                      )}
-                    </div>
+            </thead>
+            <tbody className="divide-y text-foreground">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-4 sm:px-6 py-8 text-center text-muted-foreground">
+                    Carregando colaboradores...
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : employees.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 sm:px-6 py-8 text-center text-muted-foreground">
+                    Nenhum funcionário encontrado.
+                  </td>
+                </tr>
+              ) : (
+                employees.map((emp) => (
+                  <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-4 sm:px-6 py-4">
+                      <div className="font-medium text-foreground">{emp.full_name}</div>
+                      <div className="text-xs text-muted-foreground">{emp.email}</div>
+                    </td>
+                    <td className="px-4 sm:px-6 py-4 font-mono text-xs text-muted-foreground">
+                      {emp.registration_number}
+                    </td>
+                    <td className="px-4 sm:px-6 py-4">
+                      <span className="inline-flex rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        {emp.employment_status === "active" ? "Ativo" : emp.employment_status}
+                      </span>
+                    </td>
+                    <td className="px-4 sm:px-6 py-4">
+                      {emp.biometric_status === "enrolled" ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          Cadastrada
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                          Pendente
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 sm:px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {emp.biometric_status === "enrolled" ? (
+                          <button
+                            onClick={() => handleRevoke(emp)}
+                            className="rounded-lg p-1.5 text-destructive hover:bg-destructive/10"
+                            title="Revogar Biometria"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEnrollModalEmployee(emp);
+                              setCaptures([]);
+                              startCamera();
+                            }}
+                            className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20"
+                          >
+                            <Camera className="h-3.5 w-3.5" />
+                            Cadastrar Face
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Modal Criar Funcionário */}

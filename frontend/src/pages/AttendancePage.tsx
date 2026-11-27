@@ -132,54 +132,56 @@ export function AttendancePage() {
       </div>
 
       <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
-            <tr>
-              <th className="px-6 py-3">Funcionário</th>
-              <th className="px-6 py-3">Data Local</th>
-              <th className="px-6 py-3">Horário</th>
-              <th className="px-6 py-3">Tipo de Registro</th>
-              <th className="px-6 py-3">Método</th>
-              <th className="px-6 py-3">Resultado</th>
-              <th className="px-6 py-3">Origem</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y text-foreground">
-            {loading ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="border-b bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
-                  Carregando registros de presença...
-                </td>
+                <th className="px-4 sm:px-6 py-3">Funcionário</th>
+                <th className="px-4 sm:px-6 py-3">Data Local</th>
+                <th className="px-4 sm:px-6 py-3">Horário</th>
+                <th className="px-4 sm:px-6 py-3">Tipo de Registro</th>
+                <th className="px-4 sm:px-6 py-3">Método</th>
+                <th className="px-4 sm:px-6 py-3">Resultado</th>
+                <th className="px-4 sm:px-6 py-3">Origem</th>
               </tr>
-            ) : records.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
-                  Nenhum registro de presença encontrado.
-                </td>
-              </tr>
-            ) : (
-              records.map((r) => (
-                <tr key={r.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-6 py-4 font-medium text-foreground">
-                    {r.employee_name || "Colaborador"}
+            </thead>
+            <tbody className="divide-y text-foreground">
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
+                    Carregando registros de presença...
                   </td>
-                  <td className="px-6 py-4">{r.local_date}</td>
-                  <td className="px-6 py-4 font-mono text-xs font-semibold text-primary">
-                    {new Date(r.recorded_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                  </td>
-                  <td className="px-6 py-4">{getRecordBadge(r.record_type)}</td>
-                  <td className="px-6 py-4 capitalize text-xs">{r.verification_method}</td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
-                      {r.result}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 capitalize text-xs text-muted-foreground">{r.source}</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : records.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-8 text-center text-muted-foreground">
+                    Nenhum registro de presença encontrado.
+                  </td>
+                </tr>
+              ) : (
+                records.map((r) => (
+                  <tr key={r.id} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-4 sm:px-6 py-4 font-medium text-foreground">
+                      {r.employee_name || "Colaborador"}
+                    </td>
+                    <td className="px-4 sm:px-6 py-4">{r.local_date}</td>
+                    <td className="px-4 sm:px-6 py-4 font-mono text-xs font-semibold text-primary">
+                      {new Date(r.recorded_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    </td>
+                    <td className="px-4 sm:px-6 py-4">{getRecordBadge(r.record_type)}</td>
+                    <td className="px-4 sm:px-6 py-4 capitalize text-xs">{r.verification_method}</td>
+                    <td className="px-4 sm:px-6 py-4">
+                      <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
+                        {r.result}
+                      </span>
+                    </td>
+                    <td className="px-4 sm:px-6 py-4 capitalize text-xs text-muted-foreground">{r.source}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Modal Lançamento Manual de Ponto */}

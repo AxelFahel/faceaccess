@@ -27,6 +27,7 @@ const NAV_ITEMS = [
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -43,33 +44,53 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
-      {/* Sidebar */}
+      {/* Mobile Drawer Overlay */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden transition-opacity"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Sidebar (Desktop + Mobile Drawer) */}
       <aside
         className={cn(
-          "flex flex-col border-r bg-card transition-all duration-300",
-          collapsed ? "w-20" : "w-64"
+          "fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-card transition-all duration-300 lg:static",
+          mobileOpen ? "translate-x-0 w-64 shadow-2xl" : "-translate-x-full lg:translate-x-0",
+          collapsed ? "lg:w-20" : "lg:w-64"
         )}
       >
         <div className="flex h-16 items-center justify-between border-b px-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
               <ScanFace className="h-6 w-6" />
             </div>
-            {!collapsed && (
+            {(!collapsed || mobileOpen) && (
               <span className="font-bold tracking-tight text-lg text-foreground">
                 FaceAccess
               </span>
             )}
           </div>
+
+          {/* Desktop Collapse / Mobile Close */}
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={() => {
+              if (window.innerWidth < 1024) {
+                setMobileOpen(false);
+              } else {
+                setCollapsed(!collapsed);
+              }
+            }}
             className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted"
           >
-            {collapsed ? <Menu className="h-5 w-5" /> : <X className="h-5 w-5" />}
+            <X className="h-5 w-5 lg:hidden" />
+            <span className="hidden lg:inline">
+              {collapsed ? <Menu className="h-5 w-5" /> : <X className="h-5 w-5" />}
+            </span>
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = location.pathname === item.href;
@@ -77,6 +98,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 to={item.href}
+                onClick={() => setMobileOpen(false)}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                   active
@@ -86,7 +108,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 title={collapsed ? item.label : undefined}
               >
                 <Icon className="h-5 w-5 shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
+                {(!collapsed || mobileOpen) && <span>{item.label}</span>}
               </Link>
             );
           })}
@@ -95,44 +117,54 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="border-t p-3 space-y-1">
           <Link
             to="/kiosk"
-            target="_blank"
+            onClick={() => setMobileOpen(false)}
             className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 transition-colors"
           >
             <ScanFace className="h-5 w-5 shrink-0" />
-            {!collapsed && <span>Abrir Modo Kiosk</span>}
+            {(!collapsed || mobileOpen) && <span>Modo Kiosk (Totem)</span>}
           </Link>
           <button
             onClick={toggleTheme}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
           >
             {dark ? <Sun className="h-5 w-5 shrink-0" /> : <Moon className="h-5 w-5 shrink-0" />}
-            {!collapsed && <span>{dark ? "Modo Claro" : "Modo Escuro"}</span>}
+            {(!collapsed || mobileOpen) && <span>{dark ? "Modo Claro" : "Modo Escuro"}</span>}
           </button>
           <button
             onClick={handleLogout}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
           >
             <LogOut className="h-5 w-5 shrink-0" />
-            {!collapsed && <span>Sair</span>}
+            {(!collapsed || mobileOpen) && <span>Sair</span>}
           </button>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 items-center justify-between border-b bg-card px-6">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Painel Administrativo
-          </h1>
-          <div className="flex items-center gap-4">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              IA Local Ativa (CPU/ONNX)
+      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b bg-card px-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-muted lg:hidden"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+            <h1 className="text-base sm:text-xl font-semibold tracking-tight truncate">
+              Painel Administrativo
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-4">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] sm:text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span className="hidden sm:inline">IA Local Ativa (CPU/ONNX)</span>
+              <span className="sm:hidden">IA Local</span>
             </span>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );
