@@ -9,6 +9,7 @@ import {
   Loader2,
   Settings,
 } from "lucide-react";
+import { CameraGuide, type CameraPhase } from "@/components/biometrics/CameraGuide";
 import { apiFetch } from "@/lib/api";
 
 type Mode = "setup" | "camera" | "pin" | "result";
@@ -27,11 +28,15 @@ type Credentials = { code: string; secret: string };
 export function KioskPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [credentials, setCredentials] = useState<Credentials | null>(() => {
-    const code = localStorage.getItem("terminal_code") || "TERM-PORTARIA";
-    const secret = localStorage.getItem("terminal_secret") || "55468c4d6623cc0a39a5200787d6ae97b83c35dfb23be755c3f638880b5d7f2d";
-    return { code, secret };
+    const code = localStorage.getItem("terminal_code");
+    const secret = localStorage.getItem("terminal_secret");
+    return code && secret ? { code, secret } : null;
   });
-  const [mode, setMode] = useState<Mode>("camera");
+  const [mode, setMode] = useState<Mode>(credentials ? "camera" : "setup");
+  const [phase, setPhase] = useState<CameraPhase>("idle");
+  const [frameRatio, setFrameRatio] = useState(4 / 3);
+  const [allowedOperations, setAllowedOperations] = useState<string[]>([]);
+  const [operation, setOperation] = useState<"attendance" | "access">("attendance");
   const [terminalName, setTerminalName] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [identifier, setIdentifier] = useState("");
@@ -62,11 +67,20 @@ export function KioskPage() {
     stream.current?.getTracks().forEach(track => track.stop());
     stream.current = null;
   }
+  function switchMode(next: Mode) {
+    generation.current++;
+    controller.current?.abort();
+    busy.current = false;
+    setProcessing(false);
+    setPhase("idle");
+    setMode(next);
+  }
   function resetKiosk() {
     generation.current++;
     controller.current?.abort();
     busy.current = false;
     setProcessing(false);
+    setPhase("idle");
     failures.current = 0;
     setIdentifier("");
     setPin("");
@@ -78,7 +92,16 @@ export function KioskPage() {
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
-    const visibility = () => setVisible(!document.hidden);
+    const visibility = () => {
+      setVisible(!document.hidden);
+      if (document.hidden) {
+        generation.current++;
+        controller.current?.abort();
+        busy.current = false;
+        setProcessing(false);
+        setPhase("idle");
+      }
+    };
     document.addEventListener("visibilitychange", visibility);
     return () => {
       window.clearInterval(timer);
@@ -96,7 +119,9 @@ export function KioskPage() {
     apiFetch<{ name: string; allowed_operations: string[] }>("/api/v1/kiosk/terminal", {
       headers: terminalHeaders(), authenticated: false, credentials: "omit", signal: abort.signal,
     }).then(info => {
-      if (!info.allowed_operations.includes("attendance")) throw new Error("Este terminal não está autorizado a registrar presença.");
+      if (!info.allowed_operations.some(op => op === "attendance" || op === "access")) throw new Error("Este terminal não possui operação autorizada.");
+      setAllowedOperations(info.allowed_operations);
+      setOperation(info.allowed_operations.includes("attendance") ? "attendance" : "access");
       setTerminalName(info.name);
       setAuthorized(true);
       setError("");
@@ -126,7 +151,10 @@ export function KioskPage() {
         if (video.current) {
           video.current.srcObject = media;
           await video.current.play();
-          if (!cancelled) setReady(true);
+          if (!cancelled) {
+            setFrameRatio(video.current.videoWidth / video.current.videoHeight || 4 / 3);
+            setReady(true);
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -141,7 +169,7 @@ export function KioskPage() {
 
   useEffect(() => {
     if (mode !== "camera" || !ready || !authorized || !visible || processing || error) return;
-    const timer = window.setInterval(() => action.current(), 2500);
+    const timer = window.setInterval(() => action.current(), 1200);
     return () => window.clearInterval(timer);
   }, [mode, ready, authorized, visible, processing, error]);
 
@@ -193,11 +221,12 @@ export function KioskPage() {
           method,
           image_base64: image,
           pin: method === "pin" ? pin : undefined,
-          operation_type: "attendance",
+          operation_type: operation,
         }),
       });
       if (epoch !== generation.current) return;
       if (method === "face" && data.retryable && ++failures.current < 15) {
+        setPhase("idle");
         setMessage(data.message);
         return;
       }
@@ -220,7 +249,7 @@ export function KioskPage() {
     }
   }
 
-  function capture() {
+  async function capture() {
     if (mode !== "camera" || !visible || busy.current || !video.current || !ready) return;
     const frame = video.current;
     if (frame.readyState < 2 || !frame.videoWidth) return;
@@ -235,11 +264,37 @@ export function KioskPage() {
       return;
     }
     context.drawImage(frame, 0, 0, canvas.width, canvas.height);
-    void verify("face", canvas.toDataURL("image/jpeg", 0.9));
+    const image = canvas.toDataURL("image/jpeg", 0.9);
+    const epoch = generation.current;
+    busy.current = true;
+    setProcessing(true);
+    setPhase("checking");
+    controller.current = new AbortController();
+    try {
+      const guidance = await apiFetch<{ accepted: boolean; message: string }>("/api/v1/kiosk/capture-check", {
+        method: "POST", headers: terminalHeaders(), authenticated: false, credentials: "omit",
+        signal: controller.current.signal,
+        body: JSON.stringify({ image_base64: image, operation_type: operation }),
+      });
+      if (epoch !== generation.current) return;
+      setMessage(guidance.message);
+      if (!guidance.accepted) { setPhase("adjust"); return; }
+      setPhase("recognizing");
+      busy.current = false;
+      // Verify the same approved frame; the server independently repeats validation.
+      await verify("face", image);
+    } catch (err) {
+      if (epoch === generation.current) {
+        setPhase("idle");
+        setError(err instanceof Error ? err.message : "Não foi possível analisar a câmera.");
+      }
+    } finally {
+      if (epoch === generation.current) { busy.current = false; setProcessing(false); }
+    }
   }
   action.current = capture;
 
-  const granted = (result?.status === "verified" && result?.access_decision === "granted") || (result?.status === "verified" && !result?.access_decision);
+  const granted = result?.status === "verified" && result?.access_decision === "granted";
   const button = "rounded-xl border border-slate-700 px-5 py-3 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 transition-all";
   const input = "w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-center text-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500";
 
@@ -250,13 +305,13 @@ export function KioskPage() {
           <ScanFace className="h-9 w-9 text-blue-400" />
           <div>
             <h1 className="text-lg font-bold">FaceAccess Totem</h1>
-            <p className="text-xs text-slate-400">{terminalName || "TERM-PORTARIA (Entrada 01)"}</p>
+            <p className="text-xs text-slate-400">{terminalName || credentials?.code || "Dispositivo não ativado"}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 sm:gap-4">
           <time className="text-xl font-mono text-blue-400">{currentTime.toLocaleTimeString("pt-BR")}</time>
           <button
-            onClick={() => setMode(mode === "setup" ? "camera" : "setup")}
+            onClick={() => switchMode(mode === "setup" && authorized ? "camera" : "setup")}
             className="rounded-xl border border-slate-800 bg-slate-900 p-2 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             title="Configurações do Totem"
           >
@@ -273,33 +328,9 @@ export function KioskPage() {
               <p className="text-xs text-slate-400 mt-1">Conecte este terminal ao sistema</p>
             </div>
 
-            <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-blue-300">Terminal Configurado:</span>
-                <span className="rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] px-2 py-0.5 font-medium">Ativo</span>
-              </div>
-              <div className="font-mono font-bold text-sm text-white">TERM-PORTARIA — Entrada 01</div>
-              <p className="text-[11px] text-slate-400">
-                Totem oficial autorizado para validação de acesso e registro de presença em tempo real.
-              </p>
-              <button
-                onClick={() => {
-                  localStorage.setItem("terminal_code", "TERM-PORTARIA");
-                  localStorage.setItem("terminal_secret", "55468c4d6623cc0a39a5200787d6ae97b83c35dfb23be755c3f638880b5d7f2d");
-                  setCredentials({ code: "TERM-PORTARIA", secret: "55468c4d6623cc0a39a5200787d6ae97b83c35dfb23be755c3f638880b5d7f2d" });
-                  setMode("camera");
-                }}
-                className="mt-2 w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white py-3 text-sm font-semibold transition-all shadow-md shadow-blue-500/20"
-              >
-                <ScanFace className="h-4 w-4" />
-                Conectar e Iniciar Totem Entrada 01
-              </button>
-            </div>
-
-            <div className="relative flex py-1 items-center">
-              <div className="flex-grow border-t border-slate-800"></div>
-              <span className="flex-shrink mx-3 text-[10px] text-slate-500 uppercase tracking-wider">ou ativar com código</span>
-              <div className="flex-grow border-t border-slate-800"></div>
+            <div className="rounded-xl border border-slate-700 p-4 text-sm text-slate-300">
+              {authorized ? `Conectado: ${terminalName} (${credentials?.code})` : "Ative este navegador com o código gerado em Terminais e Totens."}
+              {authorized && <button onClick={() => switchMode("camera")} className={`${button} mt-3 w-full`}>Voltar à câmera</button>}
             </div>
 
             <input aria-label="Código do terminal" placeholder="Código do terminal" value={terminalCode} onChange={e => setTerminalCode(e.target.value.toUpperCase())} className={input} />
@@ -314,53 +345,50 @@ export function KioskPage() {
               Reconhecimento facial biométrico automático
             </p>
 
-            <div className="relative mt-6 aspect-[4/3] overflow-hidden rounded-3xl border-2 border-blue-500/50 bg-black shadow-2xl">
+            <div className="mt-4 flex justify-center gap-4 text-xs text-slate-300">
+              <span className={phase === "checking" ? "text-sky-300" : ""}>1. Posicionar</span>
+              <span className={phase === "recognizing" ? "text-emerald-300" : ""}>2. Reconhecer</span>
+              <span>3. Conferir acesso</span>
+            </div>
+            <div style={{ aspectRatio: frameRatio }} className="relative mt-6 overflow-hidden rounded-3xl border border-slate-700 bg-black shadow-2xl">
               <video ref={video} autoPlay playsInline muted className="h-full w-full object-contain -scale-x-100" />
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div
-                  className={`h-[80%] w-[48%] rounded-[50%] border-4 transition-all duration-300 ${
-                    processing
-                      ? "border-amber-400 animate-pulse scale-105 shadow-[0_0_30px_rgba(251,191,36,0.6)]"
-                      : "border-blue-400/80 animate-pulse"
-                  }`}
-                />
-              </div>
-              {processing && (
-                <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex flex-col items-center justify-center">
-                  <Loader2 className="h-12 w-12 text-blue-400 animate-spin mb-3" />
-                  <p className="text-sm font-semibold text-white tracking-wide">Validando biometria & horário...</p>
-                </div>
-              )}
+              <CameraGuide phase={cameraError ? "adjust" : phase} active={ready && visible && !cameraError} />
+            </div>
+            <div className="mt-3 flex flex-wrap justify-center gap-4 text-xs text-slate-400">
+              <span><span className="text-emerald-400">●</span> Posição aprovada</span>
+              <span><span className="text-rose-400">●</span> Ajustar posição</span>
+              <span><span className="text-sky-300">●</span> Analisando captura</span>
             </div>
 
-            <p role="status" className="mt-4 min-h-10 text-sm font-medium text-blue-300">
-              {cameraError || error || (!authorized ? "Conectando ao terminal..." : message)}
+            <p role="status" aria-live="polite" className={`mt-4 min-h-10 text-sm font-medium ${phase === "adjust" ? "text-rose-300" : phase === "recognizing" ? "text-emerald-300" : "text-sky-200"}`}>
+              {cameraError || error || (!authorized ? "Conectando ao terminal..." : phase === "recognizing" ? "Enquadramento aprovado. Reconhecendo participante e conferindo autorização…" : phase === "checking" ? "Analisando posição, iluminação e vivacidade…" : message)}
             </p>
 
             <div className="mt-4 flex flex-wrap justify-center gap-3">
+              {error && <button className={button} onClick={resetKiosk}>Tentar novamente</button>}
               {cameraError && (
                 <button className={button} onClick={() => setCameraAttempt(n => n + 1)}>
                   Tentar abrir câmera novamente
                 </button>
               )}
-              <button
+              {allowedOperations.includes("pin_fallback") && <button
                 disabled={processing}
                 onClick={() => {
                   setIdentifier("");
                   setPin("");
-                  setMode("pin");
+                  switchMode("pin");
                 }}
                 className={`${button} flex items-center gap-2 text-xs`}
               >
                 <KeyRound size={15} />
-                Alternativa: Digitar Matrícula e PIN
-              </button>
+                Funcionário: matrícula e PIN
+              </button>}
             </div>
           </section>
         ) : mode === "pin" ? (
           <section className="w-full max-w-sm space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-center">Matrícula e PIN</h2>
-            <p className="text-xs text-slate-400 text-center">Validação alternativa sem biometria</p>
+            <p className="text-xs text-slate-400 text-center">Alternativa para funcionários. Convidados usam reconhecimento facial.</p>
             <input aria-label="Matrícula ou crachá" autoFocus value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder="Matrícula ou crachá" className={input} />
             <input aria-label="PIN" type="password" maxLength={12} value={pin} onChange={e => setPin(e.target.value)} placeholder="PIN" onKeyDown={e => e.key === "Enter" && verify("pin")} className={input} />
             <div className="flex gap-2">
@@ -389,11 +417,11 @@ export function KioskPage() {
                   ✓ Acesso Válido
                 </span>
                 <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-                  {result.employee_name || "Colaborador"}
+                  {result.employee_name || "Participante"}
                 </h2>
                 <div className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-emerald-900/60 border border-emerald-500/40 px-5 py-2.5 text-emerald-200">
                   <Clock className="h-5 w-5 text-emerald-400" />
-                  <span className="text-xs sm:text-sm font-medium">Horário Registrado no Servidor:</span>
+                  <span className="text-xs sm:text-sm font-medium">Horário da confirmação neste dispositivo:</span>
                   <span className="font-mono text-sm sm:text-base font-bold text-white">{resultTime}</span>
                 </div>
                 <p className="mt-4 text-xs text-emerald-300/80">
@@ -435,7 +463,7 @@ export function KioskPage() {
       </main>
 
       <footer className="border-t border-slate-800 px-4 py-3 text-center text-xs text-slate-500">
-        Processamento facial biométrico local 1:1 UniFace | Servidor FaceAccess
+        Reconhecimento de funcionários e convidados • Verde na câmera indica enquadramento, não liberação de acesso
       </footer>
     </div>
   );

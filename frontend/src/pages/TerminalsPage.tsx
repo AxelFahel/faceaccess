@@ -16,6 +16,8 @@ interface Terminal {
 export function TerminalsPage() {
   const [terminals, setTerminals] = useState<Terminal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
@@ -25,9 +27,10 @@ export function TerminalsPage() {
 
   const loadTerminals = () => {
     setLoading(true);
+    setError("");
     apiFetch<Terminal[]>("/api/v1/terminals")
       .then((data) => setTerminals(data))
-      .catch((err) => console.error(err))
+      .catch((err) => setError(err.message || "Falha ao carregar terminais."))
       .finally(() => setLoading(false));
   };
 
@@ -43,6 +46,8 @@ export function TerminalsPage() {
 
   const handleCreateTerminal = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (creating) return;
+    setCreating(true);
     try {
       const created = await apiFetch<{ code: string; activation_code: string }>("/api/v1/terminals", {
         method: "POST",
@@ -55,7 +60,7 @@ export function TerminalsPage() {
       loadTerminals();
     } catch (err: any) {
       alert(err.message);
-    }
+    } finally { setCreating(false); }
   };
 
   const renewCode = async (term: Terminal) => {
@@ -66,6 +71,12 @@ export function TerminalsPage() {
 
   return (
     <div className="space-y-6">
+      {error && <p role="alert" className="rounded-xl border border-red-400 p-4 text-sm">{error} <button onClick={loadTerminals} className="underline">Tentar novamente</button></p>}
+      <div className="rounded-xl border bg-card p-4 text-sm space-y-2">
+        <p className="font-semibold">Um totem, dois fluxos de acesso</p>
+        <p className="text-muted-foreground">Funcionários: vínculo, jornada e exceções. Convidados: biometria obrigatória e janela do evento. O reconhecimento não substitui as regras de autorização.</p>
+        <p className="text-muted-foreground">Na câmera: verde para enquadramento aprovado, vermelho para ajuste e varredura durante a análise.</p>
+      </div>
       {activation && <div className="rounded-xl border border-primary bg-primary/10 p-5 space-y-2">
         <p className="font-semibold">Ativação do terminal {activation.code}</p>
         <p className="font-mono text-2xl tracking-widest">{activation.activation_code}</p>
@@ -109,11 +120,12 @@ export function TerminalsPage() {
                 <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
                   term.status === "active" ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"
                 }`}>
-                  {term.status === "active" ? "Ativo" : "Pendente"}
+                  {({ active: "Ativo", pending_activation: "Aguardando ativação", inactive: "Inativo", revoked: "Revogado" } as Record<string, string>)[term.status] || term.status}
                 </span>
               </div>
 
               <div className="border-t pt-3 text-xs text-muted-foreground space-y-1">
+                <div>Unidade: <span className="text-foreground">{units.find(unit => unit.id === term.unit_id)?.name || "Não informada"}</span></div>
                 <div>Tipo: <span className="text-foreground capitalize">{term.terminal_type}</span></div>
                 <div>Último IP: <span className="font-mono text-foreground">{term.last_ip || "Nunca conectou"}</span></div>
                 <div>Última Comunicação: <span className="text-foreground">{term.last_seen_at ? new Date(term.last_seen_at).toLocaleString("pt-BR") : "Inativo"}</span></div>
@@ -122,9 +134,9 @@ export function TerminalsPage() {
               {term.status === "active" && (
                 <button
                   onClick={() => {
-                    localStorage.setItem("terminal_code", term.code);
-                    if (term.code === "TERM-PORTARIA") {
-                      localStorage.setItem("terminal_secret", "55468c4d6623cc0a39a5200787d6ae97b83c35dfb23be755c3f638880b5d7f2d");
+                    if (localStorage.getItem("terminal_code") !== term.code || !localStorage.getItem("terminal_secret")) {
+                      setError("Este terminal já foi ativado em outro navegador. Abra no dispositivo original ou cadastre um novo terminal para este dispositivo.");
+                      return;
                     }
                     window.location.href = "/kiosk";
                   }}
@@ -192,9 +204,10 @@ export function TerminalsPage() {
                 </button>
                 <button
                   type="submit"
+                  disabled={creating || !unitId}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                 >
-                  Criar Terminal
+                  {creating ? "Criando…" : "Criar Terminal"}
                 </button>
               </div>
             </form>

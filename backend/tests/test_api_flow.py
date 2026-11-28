@@ -1,12 +1,16 @@
 import base64
 import os
 import uuid
+import tempfile
+from pathlib import Path
 import pytest
+from guest_enrollment_case import test_guest_capture_enroll_revoke_and_scope
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+test_directory = tempfile.TemporaryDirectory(prefix="faceaccess-tests-")
+os.environ["DATABASE_URL"] = "sqlite:///" + (Path(test_directory.name) / "test.db").as_posix()
 os.environ["JWT_SECRET"] = "super-secret-jwt-key-with-at-least-32-chars!"
 os.environ["AUDIT_HMAC_KEY"] = "super-secret-audit-hmac-key-min-32-bytes!"
 os.environ["BIOMETRIC_KEYS"] = '{"k1": "' + base64.b64encode(b"0" * 32).decode() + '"}'
@@ -21,7 +25,7 @@ from app.db.session import get_db
 from app.main import create_app
 from scripts.bootstrap import seed_db
 
-test_engine = create_engine("sqlite:///./test.db", connect_args={"check_same_thread": False})
+test_engine = create_engine(os.environ["DATABASE_URL"], connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 def override_get_db():
@@ -40,6 +44,9 @@ def setup_db():
     seed_db()
     yield
     test_engine.dispose()
+    from app.db.session import get_engine
+    get_engine().dispose()
+    test_directory.cleanup()
 
 @pytest.fixture
 def client():
@@ -146,18 +153,39 @@ def test_employee_and_kiosk_flow(client, monkeypatch):
     )
     assert term_res.status_code == 200
 
+    assert client.post("/api/v1/terminals/activate", json={
+        "code": term_code, "activation_code": "wrong-code",
+    }).status_code == 403
+
     act_res = client.post(
         "/api/v1/terminals/activate",
-        json={"code": term_code, "activation_code": "00000000"},
+        json={"code": term_code, "activation_code": term_res.json()["activation_code"]},
     )
     assert act_res.status_code == 200
     term_secret = act_res.json()["terminal_secret"]
+    assert client.post("/api/v1/terminals/activate", json={
+        "code": term_code, "activation_code": term_res.json()["activation_code"],
+    }).status_code == 403
 
     # 6. Kiosk verify with PIN
     term_headers = {
         "X-Terminal-Code": term_code,
         "X-Terminal-Secret": term_secret,
     }
+    # Guidance is terminal-authenticated and does not register attendance.
+    import cv2
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    _, encoded = cv2.imencode('.jpg', image)
+    guidance_payload = {"image_base64": base64.b64encode(encoded).decode()}
+    assert client.post('/api/v1/kiosk/capture-check', json=guidance_payload).status_code == 401
+    with monkeypatch.context() as patch:
+        patch.setattr(get_biometric_engine(), 'process_face', lambda *a, **kw: replace(feature, bbox=[200, 100, 440, 380]))
+        guidance = client.post('/api/v1/kiosk/capture-check', json=guidance_payload, headers=term_headers)
+        assert guidance.status_code == 200 and guidance.json()['accepted']
+        assert 'access_decision' not in guidance.json()
+    with monkeypatch.context() as patch:
+        patch.setattr(get_biometric_engine(), 'process_face', lambda *a, **kw: None)
+        assert not client.post('/api/v1/kiosk/capture-check', json=guidance_payload, headers=term_headers).json()['accepted']
     pin_verify = client.post(
         "/api/v1/kiosk/verify",
         json={
@@ -171,6 +199,59 @@ def test_employee_and_kiosk_flow(client, monkeypatch):
     assert pin_verify.status_code == 200
     assert pin_verify.json()["status"] == "verified"
     assert pin_verify.json()["access_decision"] == "granted"
+    assert pin_verify.json()["attendance_record_id"]
+
+    # Face-only recognition uses the saved template and returns the person's name.
+    face_payload = {"method": "face", "image_base64": dummy_b64, "operation_type": "attendance"}
+    face_verify = client.post("/api/v1/kiosk/verify", json=face_payload, headers=term_headers)
+    assert face_verify.status_code == 200
+    assert face_verify.json()["status"] == "verified"
+    assert face_verify.json()["employee_name"] == "Carlos Silva"
+    assert face_verify.json()["employee_id"] == emp_id
+    # The prior PIN record must not be written a second time.
+    assert face_verify.json()["attendance_record_id"] is None
+    assert face_verify.json()["reasons"]
+
+    # A missing or spoofed face must not produce attendance.
+    with monkeypatch.context() as patch:
+        patch.setattr(get_biometric_engine(), "process_face", lambda *a, **kw: None)
+        no_face = client.post("/api/v1/kiosk/verify", json=face_payload, headers=term_headers).json()
+        assert no_face["status"] == "inconclusive"
+        assert no_face["attendance_record_id"] is None
+        assert no_face["retryable"]
+    with monkeypatch.context() as patch:
+        patch.setattr(get_biometric_engine(), "process_face", lambda *a, **kw: replace(feature, liveness=None))
+        spoof = client.post("/api/v1/kiosk/verify", json=face_payload, headers=term_headers).json()
+        assert spoof["status"] == "rejected"
+        assert spoof["employee_name"] is None
+
+    # Identical candidate templates must not result in guessing someone's identity.
+    second = client.post("/api/v1/employees", json={
+        "full_name": "Outra Pessoa", "registration_number": "OTHER-" + uuid.uuid4().hex[:8],
+        "email": uuid.uuid4().hex + "@empresa.com", "unit_id": unit_id,
+    }, headers=headers).json()
+    assert client.post("/api/v1/biometrics/enroll", json={
+        "employee_id": second["id"], "images_base64": [dummy_b64] * 3, "legal_basis_record_id": lb["id"],
+    }, headers=headers).status_code == 200
+    ambiguous = client.post("/api/v1/kiosk/verify", json=face_payload, headers=term_headers).json()
+    assert ambiguous["status"] == "inconclusive"
+    assert ambiguous["employee_name"] is None
+    assert ambiguous["attendance_record_id"] is None
+
+    # An equally matching person in another unit is not a candidate for this terminal.
+    from app.models.employee import Employee
+    with TestingSessionLocal() as db:
+        other = db.get(Employee, uuid.UUID(second["id"]))
+        from app.models.organization import Unit
+        other_unit = Unit(organization_id=other.organization_id, name="Outra unidade de teste",
+                          code="TEST-" + uuid.uuid4().hex[:8])
+        db.add(other_unit)
+        db.flush()
+        other.unit_id = other_unit.id
+        db.commit()
+    scoped = client.post("/api/v1/kiosk/verify", json=face_payload, headers=term_headers).json()
+    assert scoped["status"] == "verified"
+    assert scoped["employee_id"] == emp_id
 
     # 7. Check attendance records
     att_res = client.get("/api/v1/attendance", headers=headers)

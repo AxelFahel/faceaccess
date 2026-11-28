@@ -70,7 +70,7 @@ b64_face = base64.b64encode(buf1).decode('utf-8')
 # Enroll guest biometrics
 enroll_res = requests.post(f'{BASE_URL}/api/v1/events/guests/enroll', headers=headers_admin, json={
     'guest_id': guest_no_bio['id'],
-    'images_base64': [b64_face]
+    'images_base64': [b64_face, b64_face, b64_face]
 })
 print('Guest Biometric Enrollment status:', enroll_res.status_code)
 assert enroll_res.status_code == 200, enroll_res.text

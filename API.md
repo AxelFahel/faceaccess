@@ -63,3 +63,14 @@ Retornos em formato JSON com código HTTP semântico (200, 201). Listagens pagin
 ### Privacidade & Auditoria
 - `GET /api/v1/privacy/legal-basis`: Consulta de bases legais registradas.
 - `GET /api/v1/privacy/audit-logs`: Consulta da trilha encadeada de auditoria.
+# Cadastro biométrico de funcionários e convidados (27/11/2026)
+
+- Funcionário: `POST /api/v1/biometrics/capture-check`, `POST /api/v1/biometrics/enroll`, `POST /api/v1/biometrics/revoke/{employee_id}`.
+- Convidado: `POST /api/v1/events/guests/capture-check` (`guest_id`, `image_base64`), `POST /api/v1/events/guests/enroll` (`guest_id`, `images_base64`), `POST /api/v1/events/guests/{guest_id}/revoke` (sem corpo).
+- Captura/cadastro exigem `biometrics:enroll`; revogação exige `biometrics:revoke`. Organização e unidade são verificadas no servidor; funcionários também respeitam escopo de departamento.
+- Ambos os cadastros exigem exatamente `enrollment_captures` imagens e validam qualidade, vivacidade e consistência. `capture-check` devolve `accepted`, `message`, `reasons`, `required_captures`; não grava template.
+- Convidado cancelado/bloqueado ou evento inativo/encerrado: 422. Escopo indevido: 403. Revogar preserva o convite e elimina o template cifrado.
+
+## Orientação da câmera do totem
+
+`POST /api/v1/kiosk/capture-check` recebe `image_base64` (até 4 milhões de caracteres) e `operation_type` (`attendance` ou `access`). Usa credenciais de terminal e verifica a operação autorizada. Retorna `accepted` e `message` com base em posição, tamanho do rosto, qualidade e vivacidade. Não identifica pessoas nem grava acesso/ponto. A rota `/verify` revalida a captura independentemente antes de identificar e autorizar.

@@ -29,7 +29,7 @@ print('=== Test 1: Employee with schedule outside working hours (Rejection) ==='
 now = datetime.now(timezone.utc)
 # Let's create a schedule where today is a day off (only Sunday or a specific day)
 # If today is weekday W, set schedule to (W + 1) % 7
-today_weekday = now.weekday()
+today_weekday = datetime.now().weekday()
 other_weekday = (today_weekday + 1) % 7
 
 sched_res = requests.post(f'{BASE_URL}/api/v1/schedules', headers=headers_admin, json={
@@ -120,11 +120,9 @@ assert kiosk_cancelled.json()['access_decision'] == 'denied'
 print('PASS: Access promptly revoked after exception is cancelled!')
 
 print('\n=== Test 4: Employee within active regular work hours ===')
-# Create schedule where today is working and current time is within window
-local_now = datetime.now()
-current_hhmm = local_now.strftime('%H:%M')
-start_time = (local_now - timedelta(hours=1)).strftime('%H:%M')
-end_time = (local_now + timedelta(hours=4)).strftime('%H:%M')
+# Create schedule where today is working and current time is within window (00:00 - 23:59)
+start_time = '00:00'
+end_time = '23:59'
 
 sched_active = requests.post(f'{BASE_URL}/api/v1/schedules', headers=headers_admin, json={
     'name': 'Jornada Vigente Agora',

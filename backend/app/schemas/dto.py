@@ -254,6 +254,11 @@ class TerminalActivateResponse(BaseModel):
 
 
 # --- Kiosk 1:1 Verification & Attendance ---
+class KioskCaptureRequest(BaseModel):
+    image_base64: str = Field(..., min_length=1, max_length=4_000_000)
+    operation_type: Literal["attendance", "access"] = "attendance"
+
+
 class KioskVerifyRequest(BaseModel):
     identifier: str = ""  # empty for automatic face identification; required for PIN
     method: Literal["face", "pin"] = "face"
@@ -371,6 +376,11 @@ class EventGuestRead(BaseModel):
 class GuestBiometricEnroll(BaseModel):
     guest_id: uuid.UUID
     images_base64: list[str] = Field(..., min_length=1, max_length=5)
+
+
+class GuestBiometricCaptureRequest(BaseModel):
+    guest_id: uuid.UUID
+    image_base64: str = Field(..., min_length=1, max_length=4_000_000)
 
 
 # --- Blocked Persons (Blacklist) ---

@@ -36,7 +36,8 @@ from app.models.biometric import BiometricEnrollment, EnrollmentStatus
 from app.models.employee import BiometricStatus, Employee, EmploymentStatus
 from app.models.guest import BlockedPerson, Event, EventGuest
 from app.models.organization import ScheduleException, WorkSchedule
-from app.schemas.dto import KioskVerifyRequest, KioskVerifyResponse
+from app.schemas.dto import KioskCaptureRequest, KioskVerifyRequest, KioskVerifyResponse
+from app.services.camera_guidance import camera_guidance
 from app.services.audit import AuditService
 
 router = APIRouter(prefix="/kiosk", tags=["Terminal & Kiosk"])
@@ -151,6 +152,20 @@ def _decode_image(b64_str: str) -> np.ndarray:
         return img
     except Exception as exc:
         raise ValidationFailed(f"Imagem base64 inválida: {exc}")
+
+
+@router.post("/capture-check")
+def kiosk_capture_check(
+    req: KioskCaptureRequest,
+    terminal_auth: AuthenticatedPrincipal = Depends(get_current_terminal),
+    db: Session = Depends(get_db),
+):
+    terminal = db.get(Terminal, terminal_auth.id)
+    if not terminal or req.operation_type not in terminal.allowed_operations:
+        raise Forbidden("Operação não permitida para este terminal.")
+    image = _decode_image(req.image_base64)
+    feature = get_biometric_engine().process_face(image, check_liveness=True, include_embedding=False)
+    return camera_guidance(feature, image.shape[1], image.shape[0])
 
 
 @router.post("/verify", response_model=KioskVerifyResponse)
@@ -381,6 +396,13 @@ def kiosk_verify(
                         retryable=True,
                     )
 
+                problem = _capture_problem(feature, require_liveness=s.liveness_enabled)
+                if problem:
+                    problem.access_decision = "denied"
+                    return problem
+                if guest.engine_version != engine.version:
+                    return KioskVerifyResponse(status="rejected", access_decision="denied",
+                                               message="Cadastro facial desatualizado. Procure a recepção.")
                 keyring = biometric_key_ring()
                 aad = template_aad(str(guest.id), str(guest.event_id), guest.engine_version)
                 try:

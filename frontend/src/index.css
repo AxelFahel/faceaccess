@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+.camera-guide { transition: color 220ms ease; }
+.camera-face-window { position: absolute; top: 48%; left: 50%; transform: translate(-50%, -50%); height: 76%; aspect-ratio: 3 / 4; max-width: 80%; border: 2px solid currentColor; border-radius: 48% 48% 44% 44%; overflow: hidden; box-shadow: 0 0 0 100vmax rgb(2 6 23 / .24); }
+.camera-scan-line { position: absolute; left: 8%; right: 8%; height: 1px; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px 1px currentColor; animation: camera-sweep 2.6s ease-in-out infinite alternate; }
+@keyframes camera-sweep { from { top: 8%; opacity: .35; } to { top: 92%; opacity: .85; } }
+@media (prefers-reduced-motion: reduce) {
+  .camera-guide { transition: none; }
+  .camera-scan-line { animation: none; top: 50%; opacity: .5; }
+}
+
 @layer base {
   :root {
     --background: 210 40% 98%;

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   CalendarDays,
   Plus,
@@ -15,8 +15,8 @@ import {
   UserPlus,
   ShieldCheck,
   ShieldAlert,
-  Upload,
 } from "lucide-react";
+import { EnrollmentCapture } from "@/components/biometrics/EnrollmentCapture";
 import { apiFetch } from "@/lib/api";
 
 interface EventItem {
@@ -91,12 +91,6 @@ export function EventsPage() {
 
   // Biometric Enroll Modal state for Guest
   const [enrollGuest, setEnrollGuest] = useState<EventGuest | null>(null);
-  const [enrollImages, setEnrollImages] = useState<string[]>([]);
-  const [submittingEnroll, setSubmittingEnroll] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
   const loadEvents = () => {
     setLoading(true);
     apiFetch<EventItem[]>("/api/v1/events")
@@ -201,8 +195,8 @@ export function EventsPage() {
 
       if (autoOpenEnroll) {
         setEnrollGuest(createdGuest);
-        setEnrollImages([]);
-        startCamera();
+
+
       }
     } catch (err: any) {
       alert(err.message || "Falha ao cadastrar convidado.");
@@ -224,85 +218,8 @@ export function EventsPage() {
     }
   };
 
-  // Camera capture logic for Guest Enrollment
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraActive(true);
-      }
-    } catch (err: any) {
-      alert("Não foi possível acessar a câmera: " + (err.message || err));
-    }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    setCameraActive(false);
-  };
-
-  const captureFrame = () => {
-    if (!videoRef.current) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-    setEnrollImages((prev) => [...prev, dataUrl]);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          setEnrollImages((prev) => [...prev, reader.result as string]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const handleSaveEnrollment = async () => {
-    if (!enrollGuest || enrollImages.length === 0) {
-      alert("Capture ou selecione ao menos uma foto do convidado.");
-      return;
-    }
-    setSubmittingEnroll(true);
-    try {
-      await apiFetch("/api/v1/events/guests/enroll", {
-        method: "POST",
-        body: JSON.stringify({
-          guest_id: enrollGuest.id,
-          images_base64: enrollImages,
-        }),
-      });
-      stopCamera();
-      setEnrollGuest(null);
-      setEnrollImages([]);
-      if (selectedEvent) loadGuests(selectedEvent.id);
-      alert("Biometria do convidado cadastrada com sucesso!");
-    } catch (err: any) {
-      alert(err.message || "Falha ao cadastrar biometria do convidado.");
-    } finally {
-      setSubmittingEnroll(false);
-    }
-  };
-
   const getEventScheduleStatus = (event: EventItem) => {
+    if (!event.is_active) return { label: "Inativo", desc: "Acesso indisponível", color: "bg-zinc-500/10 text-zinc-400" };
     const now = new Date();
     const start = new Date(event.starts_at);
     const end = new Date(event.ends_at);
@@ -323,7 +240,7 @@ export function EventsPage() {
       };
     } else {
       return {
-        label: "Acesso Liberado no Totem",
+        label: "Janela de acesso vigente",
         desc: "Dentro da janela de horário permitida",
         color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
       };
@@ -536,8 +453,8 @@ export function EventsPage() {
                                 <button
                                   onClick={() => {
                                     setEnrollGuest(g);
-                                    setEnrollImages([]);
-                                    startCamera();
+
+
                                   }}
                                   className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 shadow-sm"
                                 >
@@ -560,6 +477,15 @@ export function EventsPage() {
                             )}
                           </td>
                           <td className="px-4 py-3 text-right">
+                            {g.biometric_status === "enrolled" && <button
+                              className="rounded-lg border px-2 py-1 mr-2 text-xs"
+                              onClick={async () => {
+                                if (!confirm(`Revogar a biometria de ${g.full_name}? O convite será preservado.`)) return;
+                                try {
+                                  await apiFetch(`/api/v1/events/guests/${g.id}/revoke`, { method: "POST" });
+                                  loadGuests(selectedEvent.id);
+                                } catch (error) { alert(error instanceof Error ? error.message : "Falha ao revogar biometria."); }
+                              }}>Revogar biometria</button>}
                             <button
                               onClick={() => handleRemoveGuest(g)}
                               title="Remover convidado"
@@ -871,127 +797,9 @@ export function EventsPage() {
       )}
 
       {/* Modal: Cadastro Biométrico do Convidado */}
-      {enrollGuest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div>
-                <h3 className="font-semibold text-foreground flex items-center gap-2">
-                  <Camera className="h-5 w-5 text-primary" />
-                  Cadastro Facial: {enrollGuest.full_name}
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  Doc: {enrollGuest.identifier} • Evento: {selectedEvent?.name}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  stopCamera();
-                  setEnrollGuest(null);
-                  setEnrollImages([]);
-                }}
-                className="rounded-lg p-1 text-muted-foreground hover:bg-muted"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Camera Viewport */}
-            <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black flex items-center justify-center">
-              <video
-                ref={videoRef}
-                playsInline
-                muted
-                autoPlay
-                className="h-full w-full object-cover -scale-x-100"
-              />
-              <div className="absolute inset-0 pointer-events-none border-2 border-primary/40 rounded-xl m-4 border-dashed" />
-              {!cameraActive && (
-                <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/80">
-                  <button
-                    onClick={startCamera}
-                    className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow"
-                  >
-                    Ativar Câmera
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Action Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={captureFrame}
-                  disabled={!cameraActive}
-                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                >
-                  <Camera className="h-4 w-4" />
-                  Capturar Foto ({enrollImages.length})
-                </button>
-
-                <label className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium cursor-pointer hover:bg-muted">
-                  <Upload className="h-3.5 w-3.5 text-muted-foreground" />
-                  Upload Arquivo
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {enrollImages.length > 0 && (
-                <button
-                  onClick={() => setEnrollImages([])}
-                  className="text-xs text-rose-500 hover:underline"
-                >
-                  Limpar ({enrollImages.length})
-                </button>
-              )}
-            </div>
-
-            {/* Thumbnails of captures */}
-            {enrollImages.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto py-2">
-                {enrollImages.map((img, idx) => (
-                  <div key={idx} className="relative h-14 w-14 shrink-0 rounded-lg overflow-hidden border">
-                    <img src={img} alt="Captura" className="h-full w-full object-cover" />
-                    <span className="absolute bottom-0 right-0 bg-black/70 text-[9px] text-white px-1">
-                      #{idx + 1}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 border-t pt-3">
-              <button
-                type="button"
-                onClick={() => {
-                  stopCamera();
-                  setEnrollGuest(null);
-                  setEnrollImages([]);
-                }}
-                className="rounded-lg border px-4 py-2 text-xs font-medium hover:bg-muted"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveEnrollment}
-                disabled={submittingEnroll || enrollImages.length === 0}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {submittingEnroll ? "Processando e Criptografando..." : "Salvar Biometria"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {enrollGuest && <EnrollmentCapture key={enrollGuest.id} guest={enrollGuest}
+        onClose={() => setEnrollGuest(null)}
+        onComplete={() => { if (selectedEvent) loadGuests(selectedEvent.id); }} />}
     </div>
   );
 }

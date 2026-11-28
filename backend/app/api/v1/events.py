@@ -1,12 +1,9 @@
 """Events and Guest Management API."""
 from __future__ import annotations
 
-import base64
 import uuid
 from datetime import UTC, datetime
 
-import cv2
-import numpy as np
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,25 +28,14 @@ from app.schemas.dto import (
     EventGuestRead,
     EventRead,
     GuestBiometricEnroll,
+    GuestBiometricCaptureRequest,
     MessageResponse,
 )
 from app.services.audit import AuditService
+from app.services.enrollment import build_enrollment, capture_feedback, decode_image as _decode_image
+from app.services.enrollment_policy import scoped_unit, scoped_event, scoped_guest, eligible_guest
 
 router = APIRouter(prefix="/events", tags=["Eventos e Convidados"])
-
-
-def _decode_image(b64_str: str) -> np.ndarray:
-    try:
-        if "," in b64_str:
-            b64_str = b64_str.split(",", 1)[1]
-        data = base64.b64decode(b64_str)
-        arr = np.frombuffer(data, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise ValueError("Falha ao decodificar imagem.")
-        return img
-    except Exception as exc:
-        raise ValidationFailed(f"Imagem base64 inválida: {exc}")
 
 
 @router.get("", response_model=list[EventRead])
@@ -58,13 +44,16 @@ def list_events(
     principal: AuthenticatedPrincipal = Depends(require_permission("org:read")),
     db: Session = Depends(get_db),
 ):
-    query = select(Event).order_by(Event.starts_at.desc())
+    query = select(Event).join(Unit, Event.unit_id == Unit.id).where(
+        Unit.organization_id == principal.organization_id).order_by(Event.starts_at.desc())
     if unit_id:
         query = query.where(Event.unit_id == unit_id)
     events = db.execute(query).scalars().all()
 
     result = []
     for ev in events:
+        if not principal.can_access_unit(ev.unit_id):
+            continue
         read = EventRead.model_validate(ev)
         read.guest_count = len(ev.guests)
         result.append(read)
@@ -77,9 +66,7 @@ def create_event(
     principal: AuthenticatedPrincipal = Depends(require_permission("org:manage")),
     db: Session = Depends(get_db),
 ):
-    unit = db.get(Unit, req.unit_id)
-    if not unit:
-        raise NotFound("Unidade não encontrada.")
+    unit = scoped_unit(db, req.unit_id, principal)
     if req.ends_at <= req.starts_at:
         raise ValidationFailed("O horário de término deve ser posterior ao horário de início.")
 
@@ -118,9 +105,7 @@ def get_event(
     principal: AuthenticatedPrincipal = Depends(require_permission("org:read")),
     db: Session = Depends(get_db),
 ):
-    event = db.get(Event, event_id)
-    if not event:
-        raise NotFound("Evento não encontrado.")
+    event = scoped_event(db, event_id, principal)
     read = EventRead.model_validate(event)
     read.guest_count = len(event.guests)
     return read
@@ -132,9 +117,7 @@ def list_event_guests(
     principal: AuthenticatedPrincipal = Depends(require_permission("org:read")),
     db: Session = Depends(get_db),
 ):
-    event = db.get(Event, event_id)
-    if not event:
-        raise NotFound("Evento não encontrado.")
+    event = scoped_event(db, event_id, principal)
     guests = db.execute(
         select(EventGuest).where(EventGuest.event_id == event_id).order_by(EventGuest.full_name.asc())
     ).scalars().all()
@@ -148,9 +131,7 @@ def add_guest(
     principal: AuthenticatedPrincipal = Depends(require_permission("org:manage")),
     db: Session = Depends(get_db),
 ):
-    event = db.get(Event, event_id)
-    if not event:
-        raise NotFound("Evento não encontrado.")
+    event = scoped_event(db, event_id, principal)
 
     clean_ident = req.identifier.strip().upper()
     existing = db.execute(
@@ -199,9 +180,7 @@ def remove_guest(
     principal: AuthenticatedPrincipal = Depends(require_permission("org:manage")),
     db: Session = Depends(get_db),
 ):
-    guest = db.get(EventGuest, guest_id)
-    if not guest:
-        raise NotFound("Convidado não encontrado.")
+    guest, event = scoped_guest(db, guest_id, principal)
     db.delete(guest)
     db.commit()
     return MessageResponse(message="Convidado removido com sucesso.")
@@ -213,29 +192,14 @@ def enroll_guest_biometrics(
     principal: AuthenticatedPrincipal = Depends(require_permission("biometrics:enroll")),
     db: Session = Depends(get_db),
 ):
-    guest = db.get(EventGuest, req.guest_id)
-    if not guest:
-        raise NotFound("Convidado não encontrado.")
+    guest, event = scoped_guest(db, req.guest_id, principal)
+    eligible_guest(guest, event)
 
     s = get_settings()
     engine = get_biometric_engine()
 
-    embeddings = []
-    for idx, b64_img in enumerate(req.images_base64):
-        img_bgr = _decode_image(b64_img)
-        feature = engine.process_face(img_bgr, check_liveness=s.liveness_enabled)
-        if not feature:
-            raise ValidationFailed(f"Nenhum rosto detectado na captura #{idx + 1}.")
-        if not feature.quality.passed:
-            err_msg = "; ".join(feature.quality.errors)
-            raise ValidationFailed(f"Qualidade insuficiente na captura #{idx + 1}: {err_msg}")
-        embeddings.append(feature.embedding)
-
-    # Average and L2-normalize master embedding
-    master_emb = np.mean(embeddings, axis=0)
-    norm = np.linalg.norm(master_emb)
-    if norm > 0:
-        master_emb /= norm
+    result = build_enrollment(req.images_base64, engine, s)
+    master_emb = result.template
 
     # Encrypt template using AES-256-GCM
     keyring = biometric_key_ring()
@@ -263,3 +227,33 @@ def enroll_guest_biometrics(
     )
 
     return EventGuestRead.model_validate(guest)
+
+
+@router.post("/guests/capture-check")
+def check_guest_capture(
+    req: GuestBiometricCaptureRequest,
+    principal: AuthenticatedPrincipal = Depends(require_permission("biometrics:enroll")),
+    db: Session = Depends(get_db),
+):
+    guest, event = scoped_guest(db, req.guest_id, principal)
+    eligible_guest(guest, event)
+    feature = get_biometric_engine().process_face(_decode_image(req.image_base64), check_liveness=True, include_embedding=False)
+    return capture_feedback(feature, get_settings().enrollment_captures)
+
+
+@router.post("/guests/{guest_id}/revoke", response_model=MessageResponse)
+def revoke_guest_biometrics(
+    guest_id: uuid.UUID,
+    principal: AuthenticatedPrincipal = Depends(require_permission("biometrics:revoke")),
+    db: Session = Depends(get_db),
+):
+    guest, event = scoped_guest(db, guest_id, principal)
+    guest.template_ciphertext = None
+    guest.template_nonce = None
+    guest.key_id = None
+    guest.engine_version = None
+    guest.biometric_status = "revoked"
+    db.commit()
+    AuditService.record(db, actor_type="user", actor_id=str(principal.id), actor_label=principal.label,
+                        action="guest:biometric_revoked", resource_type="event_guest", resource_id=str(guest.id))
+    return MessageResponse(message="Biometria do convidado revogada. Convite preservado.")

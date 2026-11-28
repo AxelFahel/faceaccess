@@ -6,9 +6,15 @@ import { Employee } from "@/types";
 
 type CaptureResult = { accepted: boolean; message: string; required_captures: number };
 
-export function EnrollmentCapture({ employee, onClose, onComplete }: {
-  employee: Employee; onClose: () => void; onComplete: () => void;
-}) {
+type EnrollmentProps = { onClose: () => void; onComplete: () => void } & (
+  { employee: Pick<Employee, "id" | "full_name">; guest?: never } |
+  { guest: { id: string; full_name: string }; employee?: never }
+);
+
+export function EnrollmentCapture({ employee, guest, onClose, onComplete }: EnrollmentProps) {
+  const person = guest || employee!;
+  const identity = guest ? { guest_id: person.id } : { employee_id: person.id };
+  const captureUrl = guest ? "/api/v1/events/guests/capture-check" : "/api/v1/biometrics/capture-check";
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const alive = useRef(false);
@@ -102,9 +108,9 @@ export function EnrollmentCapture({ employee, onClose, onComplete }: {
     if (!context) throw new Error("Não foi possível capturar a imagem. Tente abrir a câmera novamente.");
     context.drawImage(frame, 0, 0, canvas.width, canvas.height);
     const image = canvas.toDataURL("image/jpeg", 0.9);
-      const result = await apiFetch<CaptureResult>("/api/v1/biometrics/capture-check", {
+      const result = await apiFetch<CaptureResult>(captureUrl, {
         method: "POST", signal: controller.current.signal,
-        body: JSON.stringify({ employee_id: employee.id, image_base64: image }),
+        body: JSON.stringify({ ...identity, image_base64: image }),
       });
       if (!alive.current) return;
       setRequired(result.required_captures);
@@ -139,12 +145,19 @@ export function EnrollmentCapture({ employee, onClose, onComplete }: {
     controller.current = new AbortController();
     const signal = controller.current.signal;
     try {
-      const options = await apiFetch<{ legal_bases: { id: string }[] }>("/api/v1/biometrics/enrollment-options", { signal });
-      if (!options.legal_bases.length) throw new Error("Nenhuma base legal ativa disponível para este cadastro.");
-      await apiFetch("/api/v1/biometrics/enroll", {
-        method: "POST", signal, timeoutMs: 60_000,
-        body: JSON.stringify({ employee_id: employee.id, images_base64: captures, legal_basis_record_id: options.legal_bases[0].id }),
-      });
+      if (guest) {
+        await apiFetch("/api/v1/events/guests/enroll", {
+          method: "POST", signal, timeoutMs: 60_000,
+          body: JSON.stringify({ ...identity, images_base64: captures }),
+        });
+      } else {
+        const options = await apiFetch<{ legal_bases: { id: string }[] }>("/api/v1/biometrics/enrollment-options", { signal });
+        if (!options.legal_bases.length) throw new Error("Nenhuma base legal ativa disponível para este cadastro.");
+        await apiFetch("/api/v1/biometrics/enroll", {
+          method: "POST", signal, timeoutMs: 60_000,
+          body: JSON.stringify({ ...identity, images_base64: captures, legal_basis_record_id: options.legal_bases[0].id }),
+        });
+      }
       if (!alive.current) return;
       stopCamera();
       setCaptures([]);
@@ -171,7 +184,7 @@ export function EnrollmentCapture({ employee, onClose, onComplete }: {
         className="w-full max-w-lg max-h-[95dvh] overflow-auto rounded-2xl bg-card p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div><h2 id="enrollment-title" className="text-xl font-semibold">Cadastro facial</h2>
-            <p className="text-sm text-muted-foreground">{employee.full_name}</p></div>
+            <p className="text-sm text-muted-foreground">{person.full_name}</p></div>
           <button aria-label="Fechar cadastro" disabled={saving} onClick={onClose} className="rounded-lg p-2 hover:bg-muted disabled:opacity-50"><X size={20} /></button>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -189,6 +202,9 @@ export function EnrollmentCapture({ employee, onClose, onComplete }: {
             <button autoFocus onClick={onClose} className="mt-6 rounded-lg bg-primary px-6 py-3 text-primary-foreground">Concluir</button>
           </div>
         ) : <>
+          <p className="mt-4 rounded-lg bg-muted p-3 text-sm">{guest
+            ? "Convidado: a biometria pertence a este convite. O acesso depende do evento, da unidade e do horário permitido."
+            : "Funcionário: o acesso depende do vínculo ativo, da unidade, da jornada e das exceções autorizadas."}</p>
           <p className="mt-5 text-sm">Fique em um local iluminado, retire acessórios que cubram o rosto e mantenha apenas uma pessoa na câmera.</p>
           <p className="mt-2 text-sm font-medium text-primary">Captura e conclusão automáticas. Basta olhar para a câmera.</p>
           <div className="relative mt-5 aspect-[4/3] overflow-hidden rounded-xl bg-slate-950">

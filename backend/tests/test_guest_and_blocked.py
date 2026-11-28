@@ -140,7 +140,7 @@ b64_face = base64.b64encode(buf).decode('utf-8')
 
 requests.post(f'{BASE_URL}/api/v1/events/guests/enroll', headers=headers_admin, json={
     'guest_id': g_act['id'],
-    'images_base64': [b64_face]
+    'images_base64': [b64_face, b64_face, b64_face]
 })
 
 kiosk_active = requests.post(f'{BASE_URL}/api/v1/kiosk/verify', headers=headers_term, json={
